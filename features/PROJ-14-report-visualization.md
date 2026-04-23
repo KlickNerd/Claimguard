@@ -19,8 +19,9 @@
 ## Acceptance Criteria
 - [ ] Route `/analyze/{id}` zeigt kompletten Report
 - [ ] **Zwei-Spalten-Layout:** links Originaltext mit farbigen Inline-Markierungen pro Claim, rechts Detail-Panel
-- [ ] Ampel-Farbcodierung:
-  - Grün (`allowed`), Gelb (`borderline`), Rot (`forbidden`), Grau (`unclear`)
+- [ ] Ampel-Farbcodierung (4 Status — Design-System aus PROJ-18 übernehmen):
+  - Grün (`allowed` / „Konform"), Amber (`borderline` / „Risiko"), Rot (`forbidden` / „Unzulässig"), Grau (`unclear` / „Unklar")
+  - Wiederverwendung der Komponenten `StatusPill` und `ClaimCard` aus `apps/web/src/components/site/`
 - [ ] Zusammenfassung oben (Sticky): **Compliance-Score** (0–100), Anzahl pro Status, Risiko-Score
 - [ ] Compliance-Score-Formel dokumentiert: `100 - (forbidden * 20 + borderline * 10 + unclear * 5)`, floor bei 0
 - [ ] Klick auf Claim-Markierung → Detail-Panel öffnet mit:

@@ -31,10 +31,11 @@
 | PROJ-15 | PDF-Export des Reports | Planned | [PROJ-15](PROJ-15-pdf-export.md) | 2026-04-23 |
 | PROJ-16 | Dashboard | Planned | [PROJ-16](PROJ-16-dashboard.md) | 2026-04-23 |
 | PROJ-17 | DSGVO-Konformität | Planned | [PROJ-17](PROJ-17-dsgvo-compliance.md) | 2026-04-23 |
+| PROJ-18 | Marketing Landing Page + Beta-Waitlist | In Progress | [PROJ-18](PROJ-18-marketing-landing.md) | 2026-04-24 |
 
 <!-- Add features above this line -->
 
-## Next Available ID: PROJ-18
+## Next Available ID: PROJ-19
 
 ## Recommended Build Order
 
