@@ -24,12 +24,12 @@
 | PROJ-8 | Claim-Detection | Architected | [PROJ-8](PROJ-8-claim-detection.md) | 2026-04-23 |
 | PROJ-9 | Hybrid Retrieval | Architected | [PROJ-9](PROJ-9-hybrid-retrieval.md) | 2026-04-23 |
 | PROJ-10 | Claim-Evaluation | Architected | [PROJ-10](PROJ-10-claim-evaluation.md) | 2026-04-23 |
-| PROJ-11 | Text-Input-Analyse | Planned | [PROJ-11](PROJ-11-text-input-analysis.md) | 2026-04-23 |
+| PROJ-11 | Text-Input-Analyse | In Progress | [PROJ-11](PROJ-11-text-input-analysis.md) | 2026-04-23 |
 | PROJ-12 | PDF-Upload | Planned | [PROJ-12](PROJ-12-pdf-upload.md) | 2026-04-23 |
 | PROJ-13 | URL-Analyse (Text-only) | Planned | [PROJ-13](PROJ-13-url-analysis.md) | 2026-04-23 |
-| PROJ-14 | Analyse-Report-Darstellung | Planned | [PROJ-14](PROJ-14-report-visualization.md) | 2026-04-23 |
+| PROJ-14 | Analyse-Report-Darstellung | In Progress | [PROJ-14](PROJ-14-report-visualization.md) | 2026-04-23 |
 | PROJ-15 | PDF-Export des Reports | Planned | [PROJ-15](PROJ-15-pdf-export.md) | 2026-04-23 |
-| PROJ-16 | Dashboard | Planned | [PROJ-16](PROJ-16-dashboard.md) | 2026-04-23 |
+| PROJ-16 | Dashboard | In Progress | [PROJ-16](PROJ-16-dashboard.md) | 2026-04-23 |
 | PROJ-17 | DSGVO-Konformität | Planned | [PROJ-17](PROJ-17-dsgvo-compliance.md) | 2026-04-23 |
 | PROJ-18 | Marketing Landing Page + Beta-Waitlist | In Progress | [PROJ-18](PROJ-18-marketing-landing.md) | 2026-04-24 |
 

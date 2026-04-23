@@ -1,6 +1,7 @@
 # PROJ-14: Analyse-Report-Darstellung
 
-## Status: Planned
+## Status: In Progress
+**Implementierungsstand:** Frontend-Mock auf `/app/history/[id]` fertig — Zwei-Spalten-Layout mit Inline-Markierungen (`MarkedText`), Status-Tiles, ClaimCards mit Rechtsgrundlage und Reformulierung, „Auf einen Blick"-Summary, Disclaimer-Footer. Echte Daten kommen nach PROJ-10-Backend.
 **Created:** 2026-04-23
 **Last Updated:** 2026-04-23
 **Backlog-Referenz:** F-013

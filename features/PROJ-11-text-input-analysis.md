@@ -1,6 +1,7 @@
 # PROJ-11: Text-Input-Analyse
 
-## Status: Planned
+## Status: In Progress
+**Implementierungsstand:** Frontend-Mock auf `/app` fertig (Tabs Text/URL/PDF, Zeichenzähler, Kategorie-Pill, Disclaimer). Anbindung an Backend-Pipeline (PROJ-8/9/10) ausstehend. Sprach-Check clientseitig noch offen.
 **Created:** 2026-04-23
 **Last Updated:** 2026-04-23
 **Backlog-Referenz:** F-001

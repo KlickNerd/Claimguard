@@ -1,6 +1,7 @@
 # PROJ-16: Dashboard
 
-## Status: Planned
+## Status: In Progress
+**Implementierungsstand:** App-Shell (`AppSidebar` mit Workspace-Card + Plan-Widget, `AppHeader` mit Search/Notifications/Avatar) und Neue-Prüfung-Screen mit KPI-Strip live unter `/app`. Verlauf-Tabelle unter `/app/history` mit AmpelBar. Team-Screen als V1.1-Placeholder, Settings als Stub. Backend-Anbindung folgt nach PROJ-1/PROJ-2.
 **Created:** 2026-04-23
 **Last Updated:** 2026-04-23
 **Backlog-Referenz:** F-050
