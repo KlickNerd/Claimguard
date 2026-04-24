@@ -81,13 +81,13 @@ def test_short_input_rejected_with_friendly_400() -> None:
 def test_too_long_input_rejected_with_friendly_400() -> None:
     response = client.post(
         "/api/analyses",
-        json={"source_type": "text", "input_text": "A" * 20_001},
+        json={"source_type": "text", "input_text": "A" * 50_001},
     )
 
     assert response.status_code == 400
     detail = response.json()["detail"]
     assert detail["code"] == "input_too_long"
-    assert "20.000" in detail["message"]
+    assert "50.000" in detail["message"]
 
 
 def test_english_input_rejected() -> None:

@@ -56,11 +56,23 @@ const API_BASE =
 export async function createAnalysis(
   payload: AnalysisRequest,
 ): Promise<AnalysisResponse> {
-  const response = await fetch(`${API_BASE}/api/analyses`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ source_type: "text", ...payload }),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}/api/analyses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ source_type: "text", ...payload }),
+    });
+  } catch (err) {
+    // "Failed to fetch" from the browser means the API didn't answer at all
+    // (server not running, wrong port, network down, CORS rejected before the
+    // response headers could be read).
+    throw new AnalysisError(
+      `Die ClaimGuard-API unter ${API_BASE} antwortet nicht. Läuft der Backend-Server? Starte ihn mit "pnpm dev:api".`,
+      "api_unreachable",
+      0,
+    );
+  }
 
   if (!response.ok) {
     let code = "internal_error";

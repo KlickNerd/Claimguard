@@ -49,7 +49,7 @@ type Phase = "idle" | "running" | "done" | "error";
 const STEP_DELAYS_MS = [500, 500, 500];
 
 const MIN_CHARS = 50;
-const MAX_CHARS = 20_000;
+const MAX_CHARS = 50_000;
 const WARN_THRESHOLD = 0.9;
 
 export default function AppHomePage() {

@@ -17,7 +17,7 @@ SourceType = Literal["text", "url", "pdf"]
 class AnalysisRequest(BaseModel):
     source_type: SourceType = "text"
     source_reference: str | None = None
-    input_text: str = Field(min_length=50, max_length=20_000)
+    input_text: str = Field(min_length=50, max_length=50_000)
 
 
 class AnalysisResponse(BaseModel):
