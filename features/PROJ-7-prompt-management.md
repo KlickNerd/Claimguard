@@ -1,6 +1,7 @@
 # PROJ-7: Prompt-Management
 
-## Status: Planned
+## Status: In Progress
+**Implementierungsstand:** `PromptLoader` mit YAML-Frontmatter-Parsing, semantischem Versions-Sort (1.10.0 > 1.2.0) und Jinja2 StrictUndefined live. Erste Prompts `claim_detection_v1.0.0.md` (Sonnet 4.6) und `claim_evaluation_v1.0.0.md` (Opus 4.7) inkl. vollständigem HCVO-Kontext. FastAPI-Router `/api/prompts` stellt Liste, Metadaten und Render-Endpoint bereit. 15 pytest-Tests grün. Eval-Runner (CLI + Dataset) offen — kommt mit PROJ-8 Backend-Anschluss.
 **Created:** 2026-04-23
 **Last Updated:** 2026-04-23
 **Backlog-Referenz:** F-030
