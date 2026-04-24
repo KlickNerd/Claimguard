@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   Sparkles,
   TrendingUp,
+  TriangleAlert,
   Upload,
 } from "lucide-react";
 import { AppHeader } from "@/components/app/app-header";
@@ -46,6 +47,10 @@ type Phase = "idle" | "running" | "done" | "error";
 // Animation hits step 3 (detect) after ~1s and holds there until the API
 // response lands; final steps play out quickly once results arrive.
 const STEP_DELAYS_MS = [500, 500, 500];
+
+const MIN_CHARS = 50;
+const MAX_CHARS = 20_000;
+const WARN_THRESHOLD = 0.9;
 
 export default function AppHomePage() {
   const [activeTab, setActiveTab] = useState<"text" | "url" | "pdf">("text");
@@ -113,7 +118,11 @@ export default function AppHomePage() {
     setError(null);
   };
 
-  const runDisabled = input.trim().length < 50;
+  const length = input.length;
+  const tooShort = input.trim().length < MIN_CHARS;
+  const tooLong = length > MAX_CHARS;
+  const warnLength = length >= MAX_CHARS * WARN_THRESHOLD && !tooLong;
+  const runDisabled = tooShort || tooLong;
 
   const counts = result?.detected_claims.reduce(
     (acc, claim) => {
@@ -218,9 +227,10 @@ export default function AppHomePage() {
                 {activeTab === "text" && (
                   <textarea
                     value={input}
-                    onChange={(e) => setInput(e.target.value)}
+                    onChange={(e) => setInput(e.target.value.slice(0, MAX_CHARS))}
                     disabled={phase === "running"}
                     rows={9}
+                    maxLength={MAX_CHARS}
                     className="w-full resize-none border-0 bg-transparent font-serif text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/70 disabled:opacity-70"
                     placeholder="Werbetext einfügen…"
                   />
@@ -245,7 +255,18 @@ export default function AppHomePage() {
 
               <div className="flex items-center justify-between border-t border-border/60 px-4 py-3 text-xs text-muted-foreground">
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                  <span>{input.length} Zeichen</span>
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1 tabular-nums",
+                      warnLength && "text-status-borderline",
+                      tooLong && "font-semibold text-status-forbidden",
+                    )}
+                  >
+                    {warnLength && (
+                      <TriangleAlert className="h-3 w-3" aria-hidden />
+                    )}
+                    {length.toLocaleString("de-DE")} / {MAX_CHARS.toLocaleString("de-DE")} Zeichen
+                  </span>
                   <span className="inline-flex items-center gap-1">
                     <Sparkles className="h-3 w-3" aria-hidden />
                     Sonnet 4.6

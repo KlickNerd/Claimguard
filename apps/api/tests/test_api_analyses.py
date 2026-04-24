@@ -66,13 +66,28 @@ def test_analysis_returns_detected_claims() -> None:
     assert data["model"] == "stub-model"
 
 
-def test_short_input_rejected_with_400() -> None:
+def test_short_input_rejected_with_friendly_400() -> None:
     response = client.post(
         "/api/analyses",
         json={"source_type": "text", "input_text": "Zu kurz."},
     )
-    # Short input hits Pydantic min_length=50 first → 422
-    assert response.status_code == 422
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert detail["code"] == "input_too_short"
+    assert "50 Zeichen" in detail["message"]
+
+
+def test_too_long_input_rejected_with_friendly_400() -> None:
+    response = client.post(
+        "/api/analyses",
+        json={"source_type": "text", "input_text": "A" * 20_001},
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert detail["code"] == "input_too_long"
+    assert "20.000" in detail["message"]
 
 
 def test_english_input_rejected() -> None:
