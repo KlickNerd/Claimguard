@@ -7,6 +7,8 @@ class Settings(BaseSettings):
     environment: str = "development"
 
     anthropic_api_key: str = ""
+    anthropic_model_detection: str = "claude-sonnet-4-6"
+    anthropic_model_evaluation: str = "claude-opus-4-7"
 
     supabase_url: str = ""
     supabase_service_role_key: str = ""

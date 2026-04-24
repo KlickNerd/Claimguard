@@ -21,7 +21,7 @@
 | PROJ-5 | HCVO-Verordnungstext-Integration | Planned | [PROJ-5](PROJ-5-hcvo-regulation.md) | 2026-04-23 |
 | PROJ-6 | Urteilsdatenbank (30 Fälle) | Planned | [PROJ-6](PROJ-6-case-law-database.md) | 2026-04-23 |
 | PROJ-7 | Prompt-Management | In Progress | [PROJ-7](PROJ-7-prompt-management.md) | 2026-04-23 |
-| PROJ-8 | Claim-Detection | Architected | [PROJ-8](PROJ-8-claim-detection.md) | 2026-04-23 |
+| PROJ-8 | Claim-Detection | In Progress | [PROJ-8](PROJ-8-claim-detection.md) | 2026-04-23 |
 | PROJ-9 | Hybrid Retrieval | Architected | [PROJ-9](PROJ-9-hybrid-retrieval.md) | 2026-04-23 |
 | PROJ-10 | Claim-Evaluation | Architected | [PROJ-10](PROJ-10-claim-evaluation.md) | 2026-04-23 |
 | PROJ-11 | Text-Input-Analyse | In Progress | [PROJ-11](PROJ-11-text-input-analysis.md) | 2026-04-23 |

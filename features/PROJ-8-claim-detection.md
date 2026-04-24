@@ -1,6 +1,7 @@
 # PROJ-8: Claim-Detection
 
-## Status: Architected
+## Status: In Progress
+**Implementierungsstand:** Detection-Service läuft live gegen Claude Sonnet 4.6 über Tool-Use. Frontend auf `/app` verdrahtet — „Claims prüfen" liefert echte Klassifizierung (5 Typen) inkl. Position und Nährstoff-Erkennung. Normalisierung (ftfy+bleach), deutscher Sprach-Check, Halluzinations-Filter, 3×Retry mit Backoff sind alle aktiv. Live-Smoke-Test mit Magnesium-Beispieltext: 4 Claims in 4 s (1546/276 Tokens ≈ 0,01 €). 32 pytest-Tests grün.
 **Created:** 2026-04-23
 **Last Updated:** 2026-04-23
 **Backlog-Referenz:** F-010

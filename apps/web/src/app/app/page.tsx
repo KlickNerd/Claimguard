@@ -4,9 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Activity,
+  AlertCircle,
   Check,
   Download,
   FileText,
+  Info,
   Link2,
   MoreHorizontal,
   RefreshCcw,
@@ -14,9 +16,7 @@ import {
   ShieldCheck,
   Sparkles,
   TrendingUp,
-  TriangleAlert,
   Upload,
-  X,
 } from "lucide-react";
 import { AppHeader } from "@/components/app/app-header";
 import { KpiCard } from "@/components/app/kpi-card";
@@ -24,11 +24,16 @@ import {
   AnalysisProgress,
   PIPELINE_STEPS,
 } from "@/components/app/analysis-progress";
-import { ClaimCard } from "@/components/site/claim-card";
+import { DetectionClaimCard } from "@/components/app/detection-claim-card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { KPIS } from "@/lib/mock-analyses";
-import { DEMO_CLAIMS, DEMO_INPUT } from "@/lib/demo-data";
+import { DEMO_INPUT } from "@/lib/demo-data";
+import {
+  AnalysisError,
+  createAnalysis,
+  type AnalysisResponse,
+} from "@/lib/api-client";
 
 const TABS = [
   { id: "text" as const, label: "Text", icon: FileText },
@@ -36,16 +41,19 @@ const TABS = [
   { id: "pdf" as const, label: "PDF", icon: Upload },
 ];
 
-type Phase = "idle" | "running" | "done";
+type Phase = "idle" | "running" | "done" | "error";
 
-const STEP_DELAYS_MS = [500, 500, 1500, 1500, 2000];
+// Animation hits step 3 (detect) after ~1s and holds there until the API
+// response lands; final steps play out quickly once results arrive.
+const STEP_DELAYS_MS = [500, 500, 500];
 
 export default function AppHomePage() {
   const [activeTab, setActiveTab] = useState<"text" | "url" | "pdf">("text");
   const [input, setInput] = useState(DEMO_INPUT);
   const [phase, setPhase] = useState<Phase>("idle");
   const [currentStep, setCurrentStep] = useState(0);
-  const [evaluated, setEvaluated] = useState(0);
+  const [result, setResult] = useState<AnalysisResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(
@@ -55,13 +63,21 @@ export default function AppHomePage() {
     [],
   );
 
-  const runAnalysis = () => {
+  const clearTimers = () => {
     timers.current.forEach(clearTimeout);
     timers.current = [];
+  };
+
+  const runAnalysis = async () => {
+    clearTimers();
     setPhase("running");
     setCurrentStep(0);
-    setEvaluated(0);
+    setResult(null);
+    setError(null);
 
+    // Walk through steps 0→1→2 with delays so the user sees progression even
+    // when the backend is quick. Step 3 (retrieve) + 4 (evaluate) are marked
+    // as "übersprungen" once the detection-only API returns.
     let cumulative = 0;
     for (let i = 0; i < STEP_DELAYS_MS.length; i++) {
       cumulative += STEP_DELAYS_MS[i];
@@ -70,29 +86,42 @@ export default function AppHomePage() {
       );
     }
 
-    // Animate evaluated counter during evaluate step
-    const beforeEvaluate = STEP_DELAYS_MS.slice(0, 4).reduce((a, b) => a + b, 0);
-    DEMO_CLAIMS.forEach((_, i) => {
-      timers.current.push(
-        setTimeout(
-          () => setEvaluated(i + 1),
-          beforeEvaluate +
-            ((i + 1) * STEP_DELAYS_MS[4]) / DEMO_CLAIMS.length,
-        ),
-      );
-    });
-
-    timers.current.push(setTimeout(() => setPhase("done"), cumulative + 200));
+    try {
+      const response = await createAnalysis({ input_text: input });
+      clearTimers();
+      setCurrentStep(PIPELINE_STEPS.length);
+      setResult(response);
+      setPhase("done");
+    } catch (err) {
+      clearTimers();
+      if (err instanceof AnalysisError) {
+        setError(err.message);
+      } else if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError("Unbekannter Fehler bei der Analyse.");
+      }
+      setPhase("error");
+    }
   };
 
   const resetAnalysis = () => {
-    timers.current.forEach(clearTimeout);
+    clearTimers();
     setPhase("idle");
     setCurrentStep(0);
-    setEvaluated(0);
+    setResult(null);
+    setError(null);
   };
 
   const runDisabled = input.trim().length < 50;
+
+  const counts = result?.detected_claims.reduce(
+    (acc, claim) => {
+      acc[claim.claim_type] = (acc[claim.claim_type] ?? 0) + 1;
+      return acc;
+    },
+    {} as Record<string, number>,
+  );
 
   return (
     <>
@@ -109,13 +138,13 @@ export default function AppHomePage() {
               </h1>
               <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
                 Füge Werbetext, Produktseiten-URL oder PDF ein – ClaimGuard
-                bewertet jeden Claim gegen die aktuelle Rechtslage.
+                erkennt Health Claims und kategorisiert sie nach HCVO-Typ.
               </p>
             </div>
             <Button variant="outline" size="sm" asChild>
               <Link href="/app/history/chk_2k9f3a">
                 <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                Letzten Report ansehen
+                Beispielreport ansehen
               </Link>
             </Button>
           </div>
@@ -144,7 +173,6 @@ export default function AppHomePage() {
           </div>
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            {/* Editor Card */}
             <div className="flex flex-col rounded-xl border border-border/70 bg-card shadow-sm">
               <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
                 <div className="flex items-center gap-1 rounded-md bg-muted/60 p-0.5">
@@ -201,7 +229,7 @@ export default function AppHomePage() {
                   <div className="flex h-[180px] flex-col items-center justify-center gap-2 text-center">
                     <Link2 className="h-6 w-6 text-muted-foreground" aria-hidden />
                     <p className="text-sm text-muted-foreground">
-                      URL einfügen, wir rendern die Seite und extrahieren den Text.
+                      URL-Analyse folgt in einem nächsten Schritt.
                     </p>
                   </div>
                 )}
@@ -209,7 +237,7 @@ export default function AppHomePage() {
                   <div className="flex h-[180px] flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/70 text-center">
                     <Upload className="h-6 w-6 text-muted-foreground" aria-hidden />
                     <p className="text-sm text-muted-foreground">
-                      PDF hier ablegen oder auswählen. Max. 10 MB.
+                      PDF-Upload folgt mit PROJ-12.
                     </p>
                   </div>
                 )}
@@ -220,11 +248,11 @@ export default function AppHomePage() {
                   <span>{input.length} Zeichen</span>
                   <span className="inline-flex items-center gap-1">
                     <Sparkles className="h-3 w-3" aria-hidden />
-                    ≈ 6 s Analyse
+                    Sonnet 4.6
                   </span>
                   <span className="inline-flex items-center gap-1">
                     <Check className="h-3 w-3 text-primary" aria-hidden />
-                    EU-Hosting aktiv
+                    Zero-Retention
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -253,57 +281,35 @@ export default function AppHomePage() {
             <div className="flex flex-col rounded-xl border border-border/70 bg-card shadow-sm">
               <div className="flex items-center justify-between border-b border-border/60 px-5 py-3">
                 <h2 className="text-sm font-medium">Ergebnisse</h2>
-                {phase === "done" && (
+                {phase === "done" && result && (
                   <span className="font-mono text-[11px] text-muted-foreground">
-                    Demo · nicht gespeichert
+                    {result.latency_ms} ms · {result.input_tokens}/{result.output_tokens} Tokens
                   </span>
                 )}
               </div>
 
               {phase === "idle" && <IdleState />}
-
               {phase === "running" && (
-                <div className="flex flex-1 flex-col gap-6 p-6">
-                  <div>
-                    <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                      Analyse läuft
-                    </div>
-                    <div className="mt-1 font-serif text-lg font-semibold tracking-tight">
-                      Schritt {Math.min(currentStep + 1, PIPELINE_STEPS.length)} von{" "}
-                      {PIPELINE_STEPS.length}
-                    </div>
-                  </div>
-                  <AnalysisProgress
-                    currentStep={currentStep}
-                    claimsFound={currentStep >= 3 ? DEMO_CLAIMS.length : undefined}
-                    claimsEvaluated={evaluated}
-                  />
-                </div>
+                <RunningState currentStep={currentStep} />
               )}
-
-              {phase === "done" && (
-                <div className="flex-1 space-y-3 p-5">
-                  {DEMO_CLAIMS.map((c) => (
-                    <ClaimCard key={c.id} claim={c} />
-                  ))}
-                  <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                    <span>3 Claims bewertet · Demo-Daten</span>
-                    <Button variant="ghost" size="sm" onClick={resetAnalysis}>
-                      <RefreshCcw className="mr-1.5 h-3 w-3" aria-hidden />
-                      Neu prüfen
-                    </Button>
-                  </div>
-                </div>
+              {phase === "error" && (
+                <ErrorState message={error} onReset={resetAnalysis} />
+              )}
+              {phase === "done" && result && (
+                <DoneState
+                  result={result}
+                  counts={counts ?? {}}
+                  onReset={resetAnalysis}
+                />
               )}
             </div>
           </div>
 
           <p className="max-w-3xl text-xs text-muted-foreground">
-            ClaimGuard ist ein Assistenzsystem zur Compliance-Einschätzung und{" "}
-            <strong className="font-semibold text-foreground">
-              ersetzt keine Rechtsberatung
-            </strong>
-            . Im Zweifelsfall einen Fachanwalt für Wettbewerbsrecht konsultieren.
+            Stand {new Date().toLocaleDateString("de-DE")}: Detection läuft live gegen
+            Claude Sonnet 4.6. Rechtliche Bewertung (Konform / Risiko / Unzulässig) und
+            Reformulierung folgen, sobald Retrieval (PROJ-9) und Evaluation (PROJ-10)
+            verdrahtet sind.
           </p>
         </div>
       </div>
@@ -322,23 +328,115 @@ function IdleState() {
           Bereit zur Analyse
         </h3>
         <p className="mt-1 max-w-xs text-sm text-muted-foreground">
-          Sobald du auf „Claims prüfen" klickst, identifiziert ClaimGuard alle
-          expliziten und impliziten Health Claims und bewertet sie einzeln.
+          Klick „Claims prüfen" – Sonnet 4.6 erkennt alle expliziten und
+          impliziten Health Claims im Text.
         </p>
       </div>
-      <div className="flex flex-wrap items-center justify-center gap-1.5">
-        <span className="inline-flex items-center gap-1 rounded-full bg-status-allowed-bg px-2 py-0.5 text-[11px] font-medium text-status-allowed">
-          <Check className="h-3 w-3" aria-hidden />
-          Konform
+    </div>
+  );
+}
+
+function RunningState({ currentStep }: { currentStep: number }) {
+  return (
+    <div className="flex flex-1 flex-col gap-6 p-6">
+      <div>
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Analyse läuft
+        </div>
+        <div className="mt-1 font-serif text-lg font-semibold tracking-tight">
+          Schritt {Math.min(currentStep + 1, PIPELINE_STEPS.length)} von{" "}
+          {PIPELINE_STEPS.length}
+        </div>
+      </div>
+      <AnalysisProgress currentStep={currentStep} />
+      <p className="mt-auto text-[11px] text-muted-foreground">
+        Sonnet 4.6 braucht in der Regel 2–6 Sekunden pro Analyse.
+      </p>
+    </div>
+  );
+}
+
+function ErrorState({
+  message,
+  onReset,
+}: {
+  message: string | null;
+  onReset: () => void;
+}) {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
+      <span className="grid h-12 w-12 place-items-center rounded-full bg-status-forbidden-bg text-status-forbidden">
+        <AlertCircle className="h-5 w-5" aria-hidden />
+      </span>
+      <div>
+        <h3 className="font-serif text-lg font-semibold tracking-tight">
+          Analyse fehlgeschlagen
+        </h3>
+        <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+          {message ?? "Unbekannter Fehler."}
+        </p>
+      </div>
+      <Button variant="outline" size="sm" onClick={onReset}>
+        <RefreshCcw className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+        Erneut versuchen
+      </Button>
+    </div>
+  );
+}
+
+function DoneState({
+  result,
+  counts,
+  onReset,
+}: {
+  result: AnalysisResponse;
+  counts: Record<string, number>;
+  onReset: () => void;
+}) {
+  const claimCount = result.detected_claims.length;
+  const disease = counts.disease_based ?? 0;
+  return (
+    <div className="flex-1 space-y-3 p-5">
+      {claimCount === 0 ? (
+        <div className="rounded-lg border border-border/60 bg-muted/40 p-4 text-sm text-muted-foreground">
+          {result.warnings[0] ??
+            "Keine gesundheitsbezogenen Aussagen gefunden."}
+        </div>
+      ) : (
+        <>
+          <div className="flex items-start gap-3 rounded-lg border border-accent/60 bg-accent/40 p-3 text-xs">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent-foreground" aria-hidden />
+            <p className="text-foreground/80">
+              <strong className="font-semibold">{claimCount} Claims erkannt.</strong>{" "}
+              Rechtliche Bewertung folgt in Stufe 3 – zeigt dann Status, Rechtsgrundlage und
+              Reformulierung.{" "}
+              {disease > 0 && (
+                <span className="text-status-forbidden">
+                  {disease} krankheitsbezogene Aussage(n) – hohes Abmahn-Risiko.
+                </span>
+              )}
+            </p>
+          </div>
+          {result.detected_claims.map((claim) => (
+            <DetectionClaimCard key={claim.id} claim={claim} />
+          ))}
+        </>
+      )}
+      {result.warnings.length > 0 && claimCount > 0 && (
+        <div className="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground">
+          {result.warnings.map((w, i) => (
+            <p key={i}>{w}</p>
+          ))}
+        </div>
+      )}
+      <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+        <span>
+          {result.model} · {result.latency_ms} ms
         </span>
-        <span className="inline-flex items-center gap-1 rounded-full bg-status-borderline-bg px-2 py-0.5 text-[11px] font-medium text-status-borderline">
-          <TriangleAlert className="h-3 w-3" aria-hidden />
-          Risiko
-        </span>
-        <span className="inline-flex items-center gap-1 rounded-full bg-status-forbidden-bg px-2 py-0.5 text-[11px] font-medium text-status-forbidden">
-          <X className="h-3 w-3" aria-hidden />
-          Unzulässig
-        </span>
+        <Button variant="ghost" size="sm" onClick={onReset}>
+          <RefreshCcw className="mr-1.5 h-3 w-3" aria-hidden />
+          Neu prüfen
+        </Button>
       </div>
     </div>
   );
