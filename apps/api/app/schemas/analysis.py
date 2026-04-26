@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
-from app.schemas.claim import DetectedClaim
+from app.schemas.claim import DetectedClaim, EvaluatedClaim
 
 
 def _utcnow() -> datetime:
@@ -27,6 +27,7 @@ class AnalysisResponse(BaseModel):
     source_reference: str | None = None
     input_text: str
     detected_claims: list[DetectedClaim]
+    evaluated_claims: list[EvaluatedClaim] = Field(default_factory=list)
     prompt_version: str
     model: str
     input_tokens: int

@@ -18,6 +18,25 @@ export type DetectedClaim = {
   position_end: number;
 };
 
+export type EvaluationStatus = "allowed" | "borderline" | "forbidden" | "unclear";
+export type RiskLevel = "low" | "medium" | "high";
+
+export type LegalHint = {
+  reference: string;
+  rationale: string;
+};
+
+export type EvaluatedClaim = DetectedClaim & {
+  status: EvaluationStatus;
+  confidence: number;
+  risk_level: RiskLevel;
+  reasoning: string;
+  rewrite_suggestion: string | null;
+  legal_hints: LegalHint[];
+  evaluation_model: string;
+  evaluation_prompt_version: string;
+};
+
 export type AnalysisResponse = {
   id: string;
   status: "completed";
@@ -25,6 +44,7 @@ export type AnalysisResponse = {
   source_reference: string | null;
   input_text: string;
   detected_claims: DetectedClaim[];
+  evaluated_claims: EvaluatedClaim[];
   prompt_version: string;
   model: string;
   input_tokens: number;

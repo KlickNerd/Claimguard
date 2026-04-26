@@ -4,12 +4,16 @@ from app.pipelines.claim_detection import DetectionOnlyPipeline, PipelineError
 from app.schemas.analysis import AnalysisError, AnalysisRequest, AnalysisResponse
 from app.services.anthropic_client import AnthropicServiceError
 from app.services.claim_detector import ClaimDetector
+from app.services.claim_evaluator import ClaimEvaluator
 
 router = APIRouter(prefix="/api/analyses", tags=["analyses"])
 
 
 def get_pipeline() -> DetectionOnlyPipeline:
-    return DetectionOnlyPipeline(detector=ClaimDetector())
+    return DetectionOnlyPipeline(
+        detector=ClaimDetector(),
+        evaluator=ClaimEvaluator(),
+    )
 
 
 @router.post(
@@ -26,26 +30,22 @@ async def create_analysis(
     pipeline: DetectionOnlyPipeline = Depends(get_pipeline),
 ) -> AnalysisResponse:
     try:
-        return pipeline.run(
+        return await pipeline.run(
             input_text=payload.input_text,
             source_type=payload.source_type,
             source_reference=payload.source_reference,
         )
     except PipelineError as exc:
-        # 400 for caller-induced issues (too short, wrong language).
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             detail={"code": exc.code, "message": str(exc)},
         ) from exc
     except AnthropicServiceError as exc:
-        # 503 signals the UI should show a retry-later state, not a validation
-        # error. Credit refund logic will attach here once persistence lands.
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "anthropic_unavailable", "message": str(exc)},
         ) from exc
     except ValueError as exc:
-        # Pydantic validation bubbling up from the schema (e.g. bad enum value).
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"code": "schema_violation", "message": str(exc)},

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Activity,
@@ -11,6 +11,7 @@ import {
   Info,
   Link2,
   MoreHorizontal,
+  Pencil,
   RefreshCcw,
   Scan,
   ShieldCheck,
@@ -26,6 +27,8 @@ import {
   PIPELINE_STEPS,
 } from "@/components/app/analysis-progress";
 import { DetectionClaimCard } from "@/components/app/detection-claim-card";
+import { EvaluatedClaimCard } from "@/components/app/evaluated-claim-card";
+import { HighlightedText } from "@/components/app/highlighted-text";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { KPIS } from "@/lib/mock-analyses";
@@ -44,8 +47,6 @@ const TABS = [
 
 type Phase = "idle" | "running" | "done" | "error";
 
-// Animation hits step 3 (detect) after ~1s and holds there until the API
-// response lands; final steps play out quickly once results arrive.
 const STEP_DELAYS_MS = [500, 500, 500];
 
 const MIN_CHARS = 50;
@@ -59,7 +60,19 @@ export default function AppHomePage() {
   const [currentStep, setCurrentStep] = useState(0);
   const [result, setResult] = useState<AnalysisResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activeClaimId, setActiveClaimId] = useState<string | null>(null);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const editorRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Auto-grow the textarea up to a sensible cap so a 17 000-char paste isn't
+  // crammed into 9 rows. Above the cap the textarea scrolls itself.
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const next = Math.min(Math.max(el.scrollHeight, 240), 720);
+    el.style.height = `${next}px`;
+  }, [input, phase]);
 
   useEffect(
     () => () => {
@@ -80,9 +93,6 @@ export default function AppHomePage() {
     setResult(null);
     setError(null);
 
-    // Walk through steps 0→1→2 with delays so the user sees progression even
-    // when the backend is quick. Step 3 (retrieve) + 4 (evaluate) are marked
-    // as "übersprungen" once the detection-only API returns.
     let cumulative = 0;
     for (let i = 0; i < STEP_DELAYS_MS.length; i++) {
       cumulative += STEP_DELAYS_MS[i];
@@ -116,6 +126,7 @@ export default function AppHomePage() {
     setCurrentStep(0);
     setResult(null);
     setError(null);
+    setActiveClaimId(null);
   };
 
   const length = input.length;
@@ -124,13 +135,24 @@ export default function AppHomePage() {
   const warnLength = length >= MAX_CHARS * WARN_THRESHOLD && !tooLong;
   const runDisabled = tooShort || tooLong;
 
-  const counts = result?.detected_claims.reduce(
-    (acc, claim) => {
-      acc[claim.claim_type] = (acc[claim.claim_type] ?? 0) + 1;
-      return acc;
-    },
-    {} as Record<string, number>,
-  );
+  const counts = useMemo(() => {
+    if (!result) return null;
+    const evals = result.evaluated_claims;
+    return {
+      total: result.detected_claims.length,
+      evaluated: evals.length,
+      allowed: evals.filter((c) => c.status === "allowed").length,
+      borderline: evals.filter((c) => c.status === "borderline").length,
+      forbidden: evals.filter((c) => c.status === "forbidden").length,
+      unclear: evals.filter((c) => c.status === "unclear").length,
+    };
+  }, [result]);
+
+  const handleClaimClick = (claimId: string) => {
+    setActiveClaimId(claimId);
+    const el = document.getElementById(`claim-${claimId}`);
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
 
   return (
     <>
@@ -147,13 +169,13 @@ export default function AppHomePage() {
               </h1>
               <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
                 Füge Werbetext, Produktseiten-URL oder PDF ein – ClaimGuard
-                erkennt Health Claims und kategorisiert sie nach HCVO-Typ.
+                erkennt und bewertet jeden Health Claim.
               </p>
             </div>
             <Button variant="outline" size="sm" asChild>
               <Link href="/app/history/chk_2k9f3a">
                 <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                Beispielreport ansehen
+                Beispielreport
               </Link>
             </Button>
           </div>
@@ -182,24 +204,27 @@ export default function AppHomePage() {
           </div>
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            {/* LEFT: Editor or HighlightedText */}
             <div className="flex flex-col rounded-xl border border-border/70 bg-card shadow-sm">
               <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
                 <div className="flex items-center gap-1 rounded-md bg-muted/60 p-0.5">
                   {TABS.map((tab) => {
                     const Icon = tab.icon;
                     const active = activeTab === tab.id;
+                    const disabled =
+                      phase === "running" || phase === "done";
                     return (
                       <button
                         key={tab.id}
                         type="button"
                         onClick={() => setActiveTab(tab.id)}
-                        disabled={phase === "running"}
+                        disabled={disabled}
                         className={cn(
                           "inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors",
                           active
                             ? "bg-background text-foreground shadow-sm"
                             : "text-muted-foreground hover:text-foreground",
-                          phase === "running" && "cursor-not-allowed opacity-60",
+                          disabled && "cursor-not-allowed opacity-60",
                         )}
                       >
                         <Icon className="h-3 w-3" aria-hidden />
@@ -210,6 +235,17 @@ export default function AppHomePage() {
                 </div>
 
                 <div className="flex items-center gap-2">
+                  {phase === "done" && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={resetAnalysis}
+                      className="h-7 px-2 text-xs"
+                    >
+                      <Pencil className="mr-1 h-3 w-3" aria-hidden />
+                      Bearbeiten
+                    </Button>
+                  )}
                   <span className="inline-flex items-center gap-1 rounded-md bg-muted/60 px-2 py-1 text-xs text-muted-foreground">
                     Lebensmittel / Supplement
                   </span>
@@ -223,35 +259,49 @@ export default function AppHomePage() {
                 </div>
               </div>
 
-              <div className="flex-1 p-5">
-                {activeTab === "text" && (
-                  <textarea
-                    value={input}
-                    onChange={(e) => setInput(e.target.value.slice(0, MAX_CHARS))}
-                    disabled={phase === "running"}
-                    rows={9}
-                    maxLength={MAX_CHARS}
-                    className="w-full resize-none border-0 bg-transparent font-serif text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/70 disabled:opacity-70"
-                    placeholder="Werbetext einfügen…"
-                  />
-                )}
-                {activeTab === "url" && (
-                  <div className="flex h-[180px] flex-col items-center justify-center gap-2 text-center">
-                    <Link2 className="h-6 w-6 text-muted-foreground" aria-hidden />
-                    <p className="text-sm text-muted-foreground">
-                      URL-Analyse folgt in einem nächsten Schritt.
-                    </p>
-                  </div>
-                )}
-                {activeTab === "pdf" && (
-                  <div className="flex h-[180px] flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/70 text-center">
-                    <Upload className="h-6 w-6 text-muted-foreground" aria-hidden />
-                    <p className="text-sm text-muted-foreground">
-                      PDF-Upload folgt mit PROJ-12.
-                    </p>
-                  </div>
-                )}
-              </div>
+              {phase === "done" && result ? (
+                <HighlightedText
+                  text={result.input_text}
+                  detectedClaims={result.detected_claims}
+                  evaluatedClaims={result.evaluated_claims}
+                  onClaimClick={handleClaimClick}
+                  activeClaimId={activeClaimId}
+                />
+              ) : (
+                <>
+                  {activeTab === "text" && (
+                    <div className="flex-1 p-5">
+                      <textarea
+                        ref={editorRef}
+                        value={input}
+                        onChange={(e) =>
+                          setInput(e.target.value.slice(0, MAX_CHARS))
+                        }
+                        disabled={phase === "running"}
+                        maxLength={MAX_CHARS}
+                        className="block min-h-[240px] w-full resize-none border-0 bg-transparent font-serif text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/70 disabled:opacity-70"
+                        placeholder="Werbetext einfügen…"
+                      />
+                    </div>
+                  )}
+                  {activeTab === "url" && (
+                    <div className="flex h-[240px] flex-col items-center justify-center gap-2 text-center">
+                      <Link2 className="h-6 w-6 text-muted-foreground" aria-hidden />
+                      <p className="text-sm text-muted-foreground">
+                        URL-Analyse folgt in einem nächsten Schritt.
+                      </p>
+                    </div>
+                  )}
+                  {activeTab === "pdf" && (
+                    <div className="flex h-[240px] flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/70 text-center">
+                      <Upload className="h-6 w-6 text-muted-foreground" aria-hidden />
+                      <p className="text-sm text-muted-foreground">
+                        PDF-Upload folgt mit PROJ-12.
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
 
               <div className="flex items-center justify-between border-t border-border/60 px-4 py-3 text-xs text-muted-foreground">
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -289,7 +339,7 @@ export default function AppHomePage() {
                   <Button
                     size="sm"
                     onClick={runAnalysis}
-                    disabled={runDisabled || phase === "running"}
+                    disabled={runDisabled || phase === "running" || phase === "done"}
                   >
                     <Scan className="mr-1.5 h-3.5 w-3.5" aria-hidden />
                     Claims prüfen
@@ -298,13 +348,13 @@ export default function AppHomePage() {
               </div>
             </div>
 
-            {/* Result Panel */}
+            {/* RIGHT: Result panel */}
             <div className="flex flex-col rounded-xl border border-border/70 bg-card shadow-sm">
               <div className="flex items-center justify-between border-b border-border/60 px-5 py-3">
                 <h2 className="text-sm font-medium">Ergebnisse</h2>
                 {phase === "done" && result && (
                   <span className="font-mono text-[11px] text-muted-foreground">
-                    {result.latency_ms} ms · {result.input_tokens}/{result.output_tokens} Tokens
+                    {(result.latency_ms / 1000).toFixed(1)} s · {result.input_tokens}/{result.output_tokens} Tokens
                   </span>
                 )}
               </div>
@@ -316,21 +366,23 @@ export default function AppHomePage() {
               {phase === "error" && (
                 <ErrorState message={error} onReset={resetAnalysis} />
               )}
-              {phase === "done" && result && (
+              {phase === "done" && result && counts && (
                 <DoneState
                   result={result}
-                  counts={counts ?? {}}
-                  onReset={resetAnalysis}
+                  counts={counts}
+                  activeClaimId={activeClaimId}
+                  onSelectClaim={handleClaimClick}
                 />
               )}
             </div>
           </div>
 
           <p className="max-w-3xl text-xs text-muted-foreground">
-            Stand {new Date().toLocaleDateString("de-DE")}: Detection läuft live gegen
-            Claude Sonnet 4.6. Rechtliche Bewertung (Konform / Risiko / Unzulässig) und
-            Reformulierung folgen, sobald Retrieval (PROJ-9) und Evaluation (PROJ-10)
-            verdrahtet sind.
+            <strong className="font-semibold text-foreground">Stufe 2 (KI-Schätzung):</strong>{" "}
+            Detection und Bewertung laufen live gegen Claude Sonnet 4.6. Die genannten
+            Rechtsgrundlagen sind <strong>nicht aus einer kuratierten Quellen-Datenbank</strong>{" "}
+            zitiert – Aktenzeichen sollten gegengeprüft werden. Mit Stufe 3 (PROJ-9 Retrieval +
+            PROJ-10 Opus-Evaluation) folgen verifizierte Zitate.
           </p>
         </div>
       </div>
@@ -349,8 +401,8 @@ function IdleState() {
           Bereit zur Analyse
         </h3>
         <p className="mt-1 max-w-xs text-sm text-muted-foreground">
-          Klick „Claims prüfen" – Sonnet 4.6 erkennt alle expliziten und
-          impliziten Health Claims im Text.
+          Klick „Claims prüfen" – Sonnet 4.6 erkennt und bewertet alle Health
+          Claims im Text.
         </p>
       </div>
     </div>
@@ -371,7 +423,7 @@ function RunningState({ currentStep }: { currentStep: number }) {
       </div>
       <AnalysisProgress currentStep={currentStep} />
       <p className="mt-auto text-[11px] text-muted-foreground">
-        Sonnet 4.6 braucht in der Regel 2–6 Sekunden pro Analyse.
+        Detection in 2-6 s, Bewertung läuft parallel pro Claim.
       </p>
     </div>
   );
@@ -408,57 +460,81 @@ function ErrorState({
 function DoneState({
   result,
   counts,
-  onReset,
+  activeClaimId,
+  onSelectClaim,
 }: {
   result: AnalysisResponse;
-  counts: Record<string, number>;
-  onReset: () => void;
+  counts: {
+    total: number;
+    evaluated: number;
+    allowed: number;
+    borderline: number;
+    forbidden: number;
+    unclear: number;
+  };
+  activeClaimId: string | null;
+  onSelectClaim: (id: string) => void;
 }) {
-  const claimCount = result.detected_claims.length;
-  const disease = counts.disease_based ?? 0;
+  const detectedNotEvaluated = result.detected_claims.filter(
+    (d) => !result.evaluated_claims.some((e) => e.id === d.id),
+  );
+
   return (
-    <div className="flex-1 space-y-3 p-5">
-      {claimCount === 0 ? (
-        <div className="rounded-lg border border-border/60 bg-muted/40 p-4 text-sm text-muted-foreground">
-          {result.warnings[0] ??
-            "Keine gesundheitsbezogenen Aussagen gefunden."}
-        </div>
-      ) : (
-        <>
-          <div className="flex items-start gap-3 rounded-lg border border-accent/60 bg-accent/40 p-3 text-xs">
-            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent-foreground" aria-hidden />
-            <p className="text-foreground/80">
-              <strong className="font-semibold">{claimCount} Claims erkannt.</strong>{" "}
-              Rechtliche Bewertung folgt in Stufe 3 – zeigt dann Status, Rechtsgrundlage und
-              Reformulierung.{" "}
-              {disease > 0 && (
-                <span className="text-status-forbidden">
-                  {disease} krankheitsbezogene Aussage(n) – hohes Abmahn-Risiko.
-                </span>
+    <div className="flex-1 space-y-3 overflow-y-auto p-5">
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-accent/50 bg-accent/30 px-3 py-2 text-xs">
+        <Info className="h-3.5 w-3.5 shrink-0 text-accent-foreground" aria-hidden />
+        <span className="text-foreground/85">
+          <strong className="font-semibold">{counts.total} Claims erkannt,</strong>{" "}
+          {counts.evaluated} bewertet
+          {counts.evaluated > 0 && (
+            <>
+              {" "}
+              · <span className="text-status-allowed">{counts.allowed} konform</span>
+              {" / "}
+              <span className="text-status-borderline">{counts.borderline} Risiko</span>
+              {" / "}
+              <span className="text-status-forbidden">{counts.forbidden} unzulässig</span>
+              {counts.unclear > 0 && (
+                <>
+                  {" / "}
+                  <span className="text-status-unclear">{counts.unclear} unklar</span>
+                </>
               )}
-            </p>
+            </>
+          )}
+        </span>
+      </div>
+
+      {result.evaluated_claims.map((claim, i) => (
+        <EvaluatedClaimCard
+          key={claim.id}
+          claim={claim}
+          index={i + 1}
+          isActive={activeClaimId === claim.id}
+          onSelect={() => onSelectClaim(claim.id)}
+        />
+      ))}
+
+      {detectedNotEvaluated.length > 0 && (
+        <div className="space-y-3">
+          <div className="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground">
+            {detectedNotEvaluated.length} Claim(s) wurden erkannt, aber nicht
+            bewertet – Schema-Fehler bei der Bewertung. Detection-Daten:
           </div>
-          {result.detected_claims.map((claim) => (
+          {detectedNotEvaluated.map((claim) => (
             <DetectionClaimCard key={claim.id} claim={claim} />
           ))}
-        </>
-      )}
-      {result.warnings.length > 0 && claimCount > 0 && (
-        <div className="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground">
-          {result.warnings.map((w, i) => (
-            <p key={i}>{w}</p>
-          ))}
         </div>
       )}
-      <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-        <span>
-          {result.model} · {result.latency_ms} ms
-        </span>
-        <Button variant="ghost" size="sm" onClick={onReset}>
-          <RefreshCcw className="mr-1.5 h-3 w-3" aria-hidden />
-          Neu prüfen
-        </Button>
-      </div>
+
+      {result.warnings.map((w, i) => (
+        <div
+          key={i}
+          className="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground"
+        >
+          {w}
+        </div>
+      ))}
     </div>
   );
 }

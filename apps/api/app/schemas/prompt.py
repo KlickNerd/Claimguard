@@ -3,7 +3,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-PromptTask = Literal["claim_detection", "claim_evaluation"]
+PromptTask = Literal[
+    "claim_detection",
+    "claim_evaluation",
+    "claim_evaluation_quick",
+]
 
 
 class PromptMetadata(BaseModel):
