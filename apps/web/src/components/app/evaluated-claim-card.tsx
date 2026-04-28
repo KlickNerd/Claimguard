@@ -1,4 +1,4 @@
-import { Copy, Scale, Wand2 } from "lucide-react";
+import { Check, Copy, RotateCcw, Scale, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type {
   EvaluatedClaim,
@@ -29,10 +29,21 @@ type Props = {
   claim: EvaluatedClaim;
   index: number;
   isActive?: boolean;
+  isApplied?: boolean;
   onSelect?: () => void;
+  onApply?: () => void;
+  onRevert?: () => void;
 };
 
-export function EvaluatedClaimCard({ claim, index, isActive, onSelect }: Props) {
+export function EvaluatedClaimCard({
+  claim,
+  index,
+  isActive,
+  isApplied,
+  onSelect,
+  onApply,
+  onRevert,
+}: Props) {
   const confidencePercent = Math.round(claim.confidence * 100);
   return (
     <article
@@ -40,10 +51,11 @@ export function EvaluatedClaimCard({ claim, index, isActive, onSelect }: Props) 
       data-claim-id={claim.id}
       onClick={onSelect}
       className={cn(
-        "rounded-lg border border-border/80 bg-card p-5 shadow-sm transition-shadow",
+        "rounded-lg border border-border/80 bg-card p-5 shadow-sm transition-all",
         "border-l-[3px]",
         STATUS_BORDER[claim.status],
         isActive && "ring-2 ring-primary/40",
+        isApplied && "border-status-allowed/50 bg-status-allowed-bg/30",
         onSelect && "cursor-pointer hover:shadow",
       )}
     >
@@ -53,12 +65,24 @@ export function EvaluatedClaimCard({ claim, index, isActive, onSelect }: Props) 
             #{index} · {claim.implicitness === "explicit" ? "explizit" : "implizit"}
             {claim.nutrient && ` · ${claim.nutrient}`}
           </span>
-          <h4 className="mt-1 font-serif text-base leading-tight text-foreground">
+          <h4
+            className={cn(
+              "mt-1 font-serif text-base leading-tight text-foreground",
+              isApplied && "text-muted-foreground line-through",
+            )}
+          >
             „{claim.claim_text}"
           </h4>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1.5">
-          <StatusPill status={claim.status} />
+          {isApplied ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-status-allowed-bg px-2.5 py-1 text-[11px] font-medium text-status-allowed">
+              <Check className="h-3 w-3" aria-hidden />
+              Übernommen
+            </span>
+          ) : (
+            <StatusPill status={claim.status} />
+          )}
           <span
             className={cn(
               "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium",
@@ -70,11 +94,13 @@ export function EvaluatedClaimCard({ claim, index, isActive, onSelect }: Props) 
         </div>
       </header>
 
-      <p className="mt-3 text-sm leading-relaxed text-foreground/85">
-        {claim.reasoning}
-      </p>
+      {!isApplied && (
+        <p className="mt-3 text-sm leading-relaxed text-foreground/85">
+          {claim.reasoning}
+        </p>
+      )}
 
-      {claim.legal_hints.length > 0 && (
+      {!isApplied && claim.legal_hints.length > 0 && (
         <div className="mt-4 rounded-md bg-muted/40 p-3">
           <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
             <Scale className="h-3 w-3" aria-hidden />
@@ -94,13 +120,26 @@ export function EvaluatedClaimCard({ claim, index, isActive, onSelect }: Props) 
       )}
 
       {claim.rewrite_suggestion && (
-        <div className="mt-3 rounded-md bg-accent/60 p-3">
-          <div className="flex items-center justify-between">
+        <div
+          className={cn(
+            "mt-3 rounded-md p-3",
+            isApplied ? "bg-status-allowed-bg/60" : "bg-accent/60",
+          )}
+        >
+          <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-accent-foreground/80">
               <Wand2 className="h-3 w-3" aria-hidden />
-              Reformulierungsvorschlag
+              {isApplied ? "Übernommene Reformulierung" : "Reformulierungsvorschlag"}
             </div>
-            <CopyButton text={claim.rewrite_suggestion} />
+            <div className="flex items-center gap-2">
+              {!isApplied && <CopyButton text={claim.rewrite_suggestion} />}
+              {!isApplied && onApply && (
+                <ApplyButton onClick={onApply} />
+              )}
+              {isApplied && onRevert && (
+                <RevertButton onClick={onRevert} />
+              )}
+            </div>
           </div>
           <p className="mt-1.5 text-sm leading-relaxed text-foreground/90">
             {claim.rewrite_suggestion}
@@ -108,12 +147,14 @@ export function EvaluatedClaimCard({ claim, index, isActive, onSelect }: Props) 
         </div>
       )}
 
-      <div className="mt-3 flex items-center justify-between text-[11px] text-muted-foreground">
-        <span>Confidence: {confidencePercent}%</span>
-        <span className="font-mono">
-          {claim.evaluation_model} · v{claim.evaluation_prompt_version}
-        </span>
-      </div>
+      {!isApplied && (
+        <div className="mt-3 flex items-center justify-between text-[11px] text-muted-foreground">
+          <span>Confidence: {confidencePercent}%</span>
+          <span className="font-mono">
+            {claim.evaluation_model} · v{claim.evaluation_prompt_version}
+          </span>
+        </div>
+      )}
     </article>
   );
 }
@@ -130,6 +171,38 @@ function CopyButton({ text }: { text: string }) {
     >
       <Copy className="h-3 w-3" aria-hidden />
       Kopieren
+    </button>
+  );
+}
+
+function ApplyButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className="inline-flex items-center gap-1 rounded bg-primary px-2 py-1 text-[11px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+    >
+      <Check className="h-3 w-3" aria-hidden />
+      Anwenden
+    </button>
+  );
+}
+
+function RevertButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className="inline-flex items-center gap-1 rounded text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+    >
+      <RotateCcw className="h-3 w-3" aria-hidden />
+      Rückgängig
     </button>
   );
 }

@@ -6,6 +6,8 @@ import {
   Activity,
   AlertCircle,
   Check,
+  CheckCheck,
+  Clipboard,
   Download,
   FileText,
   Info,
@@ -13,6 +15,7 @@ import {
   MoreHorizontal,
   Pencil,
   RefreshCcw,
+  RotateCcw,
   Scan,
   ShieldCheck,
   Sparkles,
@@ -37,6 +40,7 @@ import {
   AnalysisError,
   createAnalysis,
   type AnalysisResponse,
+  type EvaluatedClaim,
 } from "@/lib/api-client";
 
 const TABS = [
@@ -53,6 +57,29 @@ const MIN_CHARS = 50;
 const MAX_CHARS = 50_000;
 const WARN_THRESHOLD = 0.9;
 
+/**
+ * Apply rewrites in descending position order so earlier claims keep their
+ * original positions while we patch the text. Returns the rewritten string.
+ */
+function applyRewritesToText(
+  originalText: string,
+  evaluatedClaims: EvaluatedClaim[],
+  appliedIds: Set<string>,
+): string {
+  const ordered = evaluatedClaims
+    .filter((c) => appliedIds.has(c.id) && c.rewrite_suggestion)
+    .sort((a, b) => b.position_start - a.position_start);
+
+  let text = originalText;
+  for (const claim of ordered) {
+    text =
+      text.slice(0, claim.position_start) +
+      (claim.rewrite_suggestion ?? "") +
+      text.slice(claim.position_end);
+  }
+  return text;
+}
+
 export default function AppHomePage() {
   const [activeTab, setActiveTab] = useState<"text" | "url" | "pdf">("text");
   const [input, setInput] = useState(DEMO_INPUT);
@@ -61,11 +88,11 @@ export default function AppHomePage() {
   const [result, setResult] = useState<AnalysisResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeClaimId, setActiveClaimId] = useState<string | null>(null);
+  const [appliedIds, setAppliedIds] = useState<Set<string>>(new Set());
+  const [copyHint, setCopyHint] = useState(false);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Auto-grow the textarea up to a sensible cap so a 17 000-char paste isn't
-  // crammed into 9 rows. Above the cap the textarea scrolls itself.
   useEffect(() => {
     const el = editorRef.current;
     if (!el) return;
@@ -86,12 +113,14 @@ export default function AppHomePage() {
     timers.current = [];
   };
 
-  const runAnalysis = async () => {
+  const runAnalysis = async (overrideInput?: string) => {
+    const text = overrideInput ?? input;
     clearTimers();
     setPhase("running");
     setCurrentStep(0);
     setResult(null);
     setError(null);
+    setAppliedIds(new Set());
 
     let cumulative = 0;
     for (let i = 0; i < STEP_DELAYS_MS.length; i++) {
@@ -102,7 +131,7 @@ export default function AppHomePage() {
     }
 
     try {
-      const response = await createAnalysis({ input_text: input });
+      const response = await createAnalysis({ input_text: text });
       clearTimers();
       setCurrentStep(PIPELINE_STEPS.length);
       setResult(response);
@@ -127,6 +156,7 @@ export default function AppHomePage() {
     setResult(null);
     setError(null);
     setActiveClaimId(null);
+    setAppliedIds(new Set());
   };
 
   const length = input.length;
@@ -148,10 +178,63 @@ export default function AppHomePage() {
     };
   }, [result]);
 
+  const applicableClaims = useMemo(() => {
+    if (!result) return [];
+    return result.evaluated_claims.filter(
+      (c) =>
+        c.rewrite_suggestion &&
+        (c.status === "borderline" || c.status === "forbidden"),
+    );
+  }, [result]);
+
+  const editedText = useMemo(() => {
+    if (!result || appliedIds.size === 0) return null;
+    return applyRewritesToText(
+      result.input_text,
+      result.evaluated_claims,
+      appliedIds,
+    );
+  }, [result, appliedIds]);
+
   const handleClaimClick = (claimId: string) => {
     setActiveClaimId(claimId);
     const el = document.getElementById(`claim-${claimId}`);
     el?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+
+  const applyClaim = (claimId: string) => {
+    setAppliedIds((prev) => new Set(prev).add(claimId));
+    setActiveClaimId(claimId);
+  };
+
+  const revertClaim = (claimId: string) => {
+    setAppliedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(claimId);
+      return next;
+    });
+  };
+
+  const applyAll = () => {
+    setAppliedIds(new Set(applicableClaims.map((c) => c.id)));
+  };
+
+  const revertAll = () => {
+    setAppliedIds(new Set());
+  };
+
+  const copyEditedText = async () => {
+    const text = editedText ?? result?.input_text;
+    if (!text) return;
+    await navigator.clipboard.writeText(text);
+    setCopyHint(true);
+    window.setTimeout(() => setCopyHint(false), 2000);
+  };
+
+  const recheckEditedText = () => {
+    if (!editedText) return;
+    setInput(editedText);
+    void runAnalysis(editedText);
   };
 
   return (
@@ -260,13 +343,20 @@ export default function AppHomePage() {
               </div>
 
               {phase === "done" && result ? (
-                <HighlightedText
-                  text={result.input_text}
-                  detectedClaims={result.detected_claims}
-                  evaluatedClaims={result.evaluated_claims}
-                  onClaimClick={handleClaimClick}
-                  activeClaimId={activeClaimId}
-                />
+                editedText ? (
+                  <EditedTextView
+                    text={editedText}
+                    appliedCount={appliedIds.size}
+                  />
+                ) : (
+                  <HighlightedText
+                    text={result.input_text}
+                    detectedClaims={result.detected_claims}
+                    evaluatedClaims={result.evaluated_claims}
+                    onClaimClick={handleClaimClick}
+                    activeClaimId={activeClaimId}
+                  />
+                )
               ) : (
                 <>
                   {activeTab === "text" && (
@@ -315,7 +405,8 @@ export default function AppHomePage() {
                     {warnLength && (
                       <TriangleAlert className="h-3 w-3" aria-hidden />
                     )}
-                    {length.toLocaleString("de-DE")} / {MAX_CHARS.toLocaleString("de-DE")} Zeichen
+                    {(editedText ?? input).length.toLocaleString("de-DE")} /{" "}
+                    {MAX_CHARS.toLocaleString("de-DE")} Zeichen
                   </span>
                   <span className="inline-flex items-center gap-1">
                     <Sparkles className="h-3 w-3" aria-hidden />
@@ -327,23 +418,42 @@ export default function AppHomePage() {
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={resetAnalysis}
-                    disabled={phase === "running"}
-                  >
-                    <RefreshCcw className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                    Zurücksetzen
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={runAnalysis}
-                    disabled={runDisabled || phase === "running" || phase === "done"}
-                  >
-                    <Scan className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                    Claims prüfen
-                  </Button>
+                  {phase === "done" && editedText ? (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={copyEditedText}
+                      >
+                        <Clipboard className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                        {copyHint ? "Kopiert!" : "Text kopieren"}
+                      </Button>
+                      <Button size="sm" onClick={recheckEditedText}>
+                        <RefreshCcw className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                        Erneut prüfen
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={resetAnalysis}
+                        disabled={phase === "running"}
+                      >
+                        <RefreshCcw className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                        Zurücksetzen
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => runAnalysis()}
+                        disabled={runDisabled || phase === "running" || phase === "done"}
+                      >
+                        <Scan className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                        Claims prüfen
+                      </Button>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -370,8 +480,14 @@ export default function AppHomePage() {
                 <DoneState
                   result={result}
                   counts={counts}
+                  applicableClaims={applicableClaims}
+                  appliedIds={appliedIds}
                   activeClaimId={activeClaimId}
                   onSelectClaim={handleClaimClick}
+                  onApplyClaim={applyClaim}
+                  onRevertClaim={revertClaim}
+                  onApplyAll={applyAll}
+                  onRevertAll={revertAll}
                 />
               )}
             </div>
@@ -457,11 +573,38 @@ function ErrorState({
   );
 }
 
+function EditedTextView({
+  text,
+  appliedCount,
+}: {
+  text: string;
+  appliedCount: number;
+}) {
+  return (
+    <div className="overflow-y-auto px-5 py-5">
+      <div className="mb-3 inline-flex items-center gap-1.5 rounded-full bg-status-allowed-bg px-2.5 py-1 text-[11px] font-medium text-status-allowed">
+        <CheckCheck className="h-3 w-3" aria-hidden />
+        {appliedCount} Reformulierung
+        {appliedCount > 1 ? "en" : ""} übernommen – bearbeitete Version
+      </div>
+      <p className="whitespace-pre-wrap font-serif text-[15px] leading-[1.85] text-foreground">
+        {text}
+      </p>
+    </div>
+  );
+}
+
 function DoneState({
   result,
   counts,
+  applicableClaims,
+  appliedIds,
   activeClaimId,
   onSelectClaim,
+  onApplyClaim,
+  onRevertClaim,
+  onApplyAll,
+  onRevertAll,
 }: {
   result: AnalysisResponse;
   counts: {
@@ -472,12 +615,20 @@ function DoneState({
     forbidden: number;
     unclear: number;
   };
+  applicableClaims: EvaluatedClaim[];
+  appliedIds: Set<string>;
   activeClaimId: string | null;
   onSelectClaim: (id: string) => void;
+  onApplyClaim: (id: string) => void;
+  onRevertClaim: (id: string) => void;
+  onApplyAll: () => void;
+  onRevertAll: () => void;
 }) {
   const detectedNotEvaluated = result.detected_claims.filter(
     (d) => !result.evaluated_claims.some((e) => e.id === d.id),
   );
+  const totalApplicable = applicableClaims.length;
+  const allApplied = totalApplicable > 0 && appliedIds.size === totalApplicable;
 
   return (
     <div className="flex-1 space-y-3 overflow-y-auto p-5">
@@ -505,13 +656,54 @@ function DoneState({
         </span>
       </div>
 
+      {totalApplicable > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs">
+          <span className="text-foreground/85">
+            <strong className="font-semibold tabular-nums">
+              {appliedIds.size} / {totalApplicable}
+            </strong>{" "}
+            Reformulierungen übernommen
+          </span>
+          <div className="flex items-center gap-1.5">
+            {appliedIds.size > 0 && (
+              <button
+                type="button"
+                onClick={onRevertAll}
+                className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <RotateCcw className="h-3 w-3" aria-hidden />
+                Alle zurücksetzen
+              </button>
+            )}
+            {!allApplied && (
+              <button
+                type="button"
+                onClick={onApplyAll}
+                className="inline-flex items-center gap-1 rounded bg-primary px-2.5 py-1 text-[11px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+              >
+                <CheckCheck className="h-3 w-3" aria-hidden />
+                Alle übernehmen
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {result.evaluated_claims.map((claim, i) => (
         <EvaluatedClaimCard
           key={claim.id}
           claim={claim}
           index={i + 1}
           isActive={activeClaimId === claim.id}
+          isApplied={appliedIds.has(claim.id)}
           onSelect={() => onSelectClaim(claim.id)}
+          onApply={
+            claim.rewrite_suggestion &&
+            (claim.status === "borderline" || claim.status === "forbidden")
+              ? () => onApplyClaim(claim.id)
+              : undefined
+          }
+          onRevert={() => onRevertClaim(claim.id)}
         />
       ))}
 
