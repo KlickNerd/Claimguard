@@ -1,8 +1,13 @@
 # PROJ-5: HCVO-Verordnungstext-Integration
 
-## Status: Planned
+## Status: In Progress
+**Implementierungsstand:** Eur-Lex-HTML-Parser + Import-CLI live (`apps/api/scripts/import_hcvo.py`).
+Klassen-getriebenes Parsing der konsolidierten DE-Fassung extrahiert Artikel, Absatz, Subtitle,
+Section, Annex korrekt. Output: `apps/api/data/regulation_<id>.json` mit chunk_id-Konvention
+`<reg>-art<n>-para<m>`. 9 pytest-Tests grün. Eur-Lex blockt automatisierte Downloads (HTTP 202)
+— User muss HTML einmalig per Browser speichern. Indexierung in Qdrant + Postgres folgt mit PROJ-9.
 **Created:** 2026-04-23
-**Last Updated:** 2026-04-23
+**Last Updated:** 2026-04-30
 **Backlog-Referenz:** F-021
 
 ## Dependencies
