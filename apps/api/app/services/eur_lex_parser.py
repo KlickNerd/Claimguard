@@ -25,14 +25,36 @@ from app.schemas.regulation import RegulationChunk
 logger = logging.getLogger(__name__)
 
 
-# CSS classes used by Eur-Lex consolidated HTML since at least 2018. We match
-# *any* class containing these tokens so minor portal updates (e.g.
-# ``oj-ti-art`` becoming ``oj-ti-art ng-scope``) don't break us.
-_ARTICLE_TOKENS = ("oj-ti-art",)
-_ARTICLE_SUBTITLE_TOKENS = ("oj-sti-art",)
-_PARAGRAPH_TOKENS = ("oj-normal",)
-_SECTION_TOKENS = ("oj-ti-section-1", "oj-ti-section-2", "oj-ti-section-3")
-_ANNEX_TOKENS = ("oj-doc-ti",)  # Eur-Lex marks annex titles with this
+# Eur-Lex serves two different HTML layouts depending on the access path.
+# OJ-style ("oj-*") shows up on the modern OJ-publication view, while the
+# "consolidated text" view (the ELI URL we recommend) uses an older skin
+# with shorter class names. We accept both by matching tokens that appear
+# anywhere inside the class attribute.
+_ARTICLE_TOKENS = (
+    "oj-ti-art",
+    "title-article-norm",
+)
+_ARTICLE_SUBTITLE_TOKENS = (
+    "oj-sti-art",
+    "stitle-article-norm",
+)
+_PARAGRAPH_TOKENS = (
+    "oj-normal",
+    "norm",  # consolidated view uses bare "norm"
+)
+_SECTION_TOKENS = (
+    "oj-ti-section-1",
+    "oj-ti-section-2",
+    "oj-ti-section-3",
+    "title-division-1",
+    "title-division-2",
+    "title-gr-seq-level-1",
+)
+_ANNEX_TOKENS = (
+    "oj-doc-ti",
+    "title-fam-member",
+    "title-doc-last",
+)
 
 
 _ARTICLE_NUMBER_RE = re.compile(
