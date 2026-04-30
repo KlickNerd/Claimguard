@@ -16,3 +16,5 @@ htmlcov/
 dist/
 build/
 uv.lock.bak
+data/*.pdf
+data/*.json
