@@ -32,21 +32,34 @@ services:
       retries: 5
     restart: unless-stopped
 
-  jina-embeddings:
-    image: jinaai/jina-embeddings-v3:latest
+  # HuggingFace Text-Embeddings-Inference server hosting jina-embeddings-v3
+  # (ADR-0003). Currently behind the `embeddings` profile because TEI lacks
+  # a linux/arm64 image — on Apple Silicon we either emulate via Rosetta or
+  # fall back to in-process sentence-transformers in the API. We only need
+  # this once PROJ-9 (Retrieval) starts indexing into Qdrant.
+  #
+  # Start explicitly: `docker compose --profile embeddings up -d`
+  embeddings:
+    profiles: ["embeddings"]
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
+    platform: linux/amd64
     container_name: claimguard-embeddings
     ports:
-      - "8080:8080"
+      - "8080:80"
+    command: ["--model-id", "jinaai/jina-embeddings-v3", "--max-batch-tokens", "16384"]
     environment:
-      - MODEL_NAME=jina-embeddings-v3
-      - MAX_BATCH_SIZE=32
+      - HF_HUB_ENABLE_HF_TRANSFER=1
+    volumes:
+      - embeddings-cache:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
+      test: ["CMD", "curl", "-fs", "http://localhost:80/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
     restart: unless-stopped
 
 volumes:
   redis-data:
   qdrant-data:
+  embeddings-cache:

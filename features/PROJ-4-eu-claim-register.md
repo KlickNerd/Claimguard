@@ -1,8 +1,14 @@
 # PROJ-4: EU-Claim-Register-Integration
 
-## Status: Planned
+## Status: In Progress
+**Implementierungsstand:** Excel-Parser + CLI live (`apps/api/scripts/import_eu_register.py`).
+Header-aliasbasiertes Mapping toleriert EU-Umbenennungen, Status- und Article-Type-Coercion
+arbeiten mit Trainingstexten und Mehrsprachigkeit. Ergebnis: strukturiertes JSON nach
+`apps/api/data/eu_claims.json` mit kb_version + Status-/Type-Breakdown. Indexierung in
+Qdrant + Postgres folgt mit PROJ-9. Echter EU-Register-Import muss vom User manuell
+durchgeführt werden — kein öffentliches XML/JSON-API; Excel-Download von der EU-Portal-Seite.
 **Created:** 2026-04-23
-**Last Updated:** 2026-04-23
+**Last Updated:** 2026-04-30
 **Backlog-Referenz:** F-020
 
 ## Dependencies
