@@ -100,7 +100,7 @@ class ClaimEvaluator:
         prompt_loader: PromptLoader | None = None,
         tool_caller: _ToolCaller | None = None,
         model: str | None = None,
-        max_concurrency: int = 5,
+        max_concurrency: int = 8,
     ) -> None:
         self._loader = prompt_loader or get_prompt_loader()
         self._call = tool_caller or create_message_with_tool

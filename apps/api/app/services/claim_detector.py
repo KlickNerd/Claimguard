@@ -102,13 +102,24 @@ class ClaimDetector:
         )
 
         started = time.perf_counter()
+        # Long marketing pages can yield 40+ claims; the default 4096-token
+        # budget gets truncated mid-tool-call, leaving us with an empty
+        # claims list. 8192 covers ~80 claims comfortably.
         tool_input, in_tok, out_tok = self._call(
             model=self._model,
             system=None,
             user_content=rendered.rendered,
             tool=DETECTION_TOOL,
+            max_tokens=8192,
         )
         elapsed_ms = int((time.perf_counter() - started) * 1000)
+        logger.info(
+            "claim_detection: %d claims raw, %d in/%d out tokens, %d ms",
+            len(tool_input.get("claims", [])),
+            in_tok,
+            out_tok,
+            elapsed_ms,
+        )
 
         raw_claims: list[dict[str, Any]] = list(tool_input.get("claims", []))
         claims: list[DetectedClaim] = []
