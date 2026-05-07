@@ -46,15 +46,18 @@ ENV NEXT_TELEMETRY_DISABLED=1
 
 WORKDIR /app
 
-# Standalone output already contains a minimal node_modules.
-COPY --from=builder /repo/apps/web/.next/standalone/apps/web ./
-COPY --from=builder /repo/apps/web/.next/standalone/node_modules ./node_modules
-COPY --from=builder /repo/apps/web/.next/static ./.next/static
-COPY --from=builder /repo/apps/web/public ./public
+# With ``outputFileTracingRoot`` set to the repo root, Next emits a
+# self-contained tree under ``apps/web/.next/standalone`` that mirrors
+# the workspace layout: server.js lives at apps/web/server.js and the
+# hoisted pnpm node_modules lives at the top. Copy the whole tree so the
+# pnpm symlinks keep their relative targets.
+COPY --from=builder /repo/apps/web/.next/standalone ./
+COPY --from=builder /repo/apps/web/.next/static ./apps/web/.next/static
+COPY --from=builder /repo/apps/web/public ./apps/web/public
 
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD wget --quiet --tries=1 --spider http://127.0.0.1:3000/app || exit 1
 
-CMD ["node", "server.js"]
+CMD ["node", "apps/web/server.js"]
