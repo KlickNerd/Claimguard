@@ -50,7 +50,17 @@ def get_anthropic_client() -> Anthropic:
             raise AnthropicServiceError(
                 "ANTHROPIC_API_KEY is not configured. Set it in apps/api/.env.",
             )
-        _client = Anthropic(api_key=settings.anthropic_api_key)
+        # The SDK default is 600 s, which is longer than Caddy's 300 s
+        # reverse-proxy read_timeout. A single slow Sonnet call would
+        # block ``evaluate_all`` (asyncio.gather waits on the slowest of
+        # five concurrent calls) and surface as a 504 with no log entry,
+        # because the request never returns from the underlying httpx
+        # socket. Cap each call at 60 s so retries (3 attempts max) and
+        # parallel claim evaluations stay well under the proxy budget.
+        _client = Anthropic(
+            api_key=settings.anthropic_api_key,
+            timeout=60.0,
+        )
     return _client
 
 
