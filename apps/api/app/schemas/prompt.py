@@ -7,6 +7,7 @@ PromptTask = Literal[
     "claim_detection",
     "claim_evaluation",
     "claim_evaluation_quick",
+    "claim_evaluation_system",
 ]
 
 

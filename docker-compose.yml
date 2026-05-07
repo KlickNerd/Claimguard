@@ -32,34 +32,37 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # HuggingFace Text-Embeddings-Inference server hosting jina-embeddings-v3
-  # (ADR-0003). Currently behind the `embeddings` profile because TEI lacks
-  # a linux/arm64 image — on Apple Silicon we either emulate via Rosetta or
-  # fall back to in-process sentence-transformers in the API. We only need
-  # this once PROJ-9 (Retrieval) starts indexing into Qdrant.
-  #
-  # Start explicitly: `docker compose --profile embeddings up -d`
-  embeddings:
-    profiles: ["embeddings"]
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
-    platform: linux/amd64
-    container_name: claimguard-embeddings
+  # Postgres dient zwei Zwecken:
+  # 1. PROJ-9 Hybrid-Retrieval: tsvector('german', …) als zweite Quelle
+  #    neben Qdrant, damit Schlüsselwort-Treffer (z. B. "Apotheker",
+  #    "Nebenwirkungen") greifen, die das Embedding semantisch verfehlt.
+  # 2. später: persistierte Analyseergebnisse + Auth (PROJ-1/2/3) - dann
+  #    wird in Produktion auf Supabase Postgres gewechselt, lokal bleibt
+  #    der Container.
+  postgres:
+    image: postgres:16-alpine
+    container_name: claimguard-postgres
     ports:
-      - "8080:80"
-    command: ["--model-id", "jinaai/jina-embeddings-v3", "--max-batch-tokens", "16384"]
+      - "5432:5432"
     environment:
-      - HF_HUB_ENABLE_HF_TRANSFER=1
+      POSTGRES_USER: claimguard
+      POSTGRES_PASSWORD: claimguard
+      POSTGRES_DB: claimguard
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
     volumes:
-      - embeddings-cache:/data
+      - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "curl", "-fs", "http://localhost:80/health"]
-      interval: 15s
+      test: ["CMD-SHELL", "pg_isready -U claimguard -d claimguard"]
+      interval: 10s
       timeout: 5s
-      retries: 30
-      start_period: 60s
+      retries: 5
     restart: unless-stopped
+
+  # Embeddings laufen seit ADR-0006 in-process im FastAPI-Prozess
+  # (sentence-transformers, multilingual-e5-base). Deshalb gibt es hier
+  # keinen separaten Embedding-Container mehr.
 
 volumes:
   redis-data:
   qdrant-data:
-  embeddings-cache:
+  postgres-data:

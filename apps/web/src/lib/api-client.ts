@@ -24,6 +24,21 @@ export type RiskLevel = "low" | "medium" | "high";
 export type LegalHint = {
   reference: string;
   rationale: string;
+  verified: boolean;
+  chunk_id: string | null;
+  url: string | null;
+};
+
+export type RetrievalSourceType = "eu_claim" | "regulation" | "case_law" | "botanical";
+
+export type RetrievalHit = {
+  chunk_id: string;
+  source_type: RetrievalSourceType;
+  score: number;
+  snippet: string;
+  reference: string;
+  url: string;
+  metadata: Record<string, string | number | null>;
 };
 
 export type EvaluatedClaim = DetectedClaim & {
@@ -33,6 +48,7 @@ export type EvaluatedClaim = DetectedClaim & {
   reasoning: string;
   rewrite_suggestion: string | null;
   legal_hints: LegalHint[];
+  evidence: RetrievalHit[];
   evaluation_model: string;
   evaluation_prompt_version: string;
 };
@@ -49,6 +65,7 @@ export type AnalysisResponse = {
   model: string;
   input_tokens: number;
   output_tokens: number;
+  estimated_cost_usd: number;
   latency_ms: number;
   created_at: string;
   warnings: string[];
@@ -58,6 +75,21 @@ export type AnalysisRequest = {
   source_type?: "text" | "url" | "pdf";
   source_reference?: string | null;
   input_text: string;
+};
+
+export type PdfExtractResponse = {
+  text: string;
+  page_count: number;
+  char_count: number;
+  source_reference: string;
+};
+
+export type UrlExtractResponse = {
+  text: string;
+  title: string | null;
+  final_url: string;
+  char_count: number;
+  source_reference: string;
 };
 
 export class AnalysisError extends Error {
@@ -113,4 +145,186 @@ export async function createAnalysis(
   }
 
   return (await response.json()) as AnalysisResponse;
+}
+
+export async function extractPdf(file: File): Promise<PdfExtractResponse> {
+  const form = new FormData();
+  form.append("file", file);
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}/api/extract/pdf`, {
+      method: "POST",
+      body: form,
+    });
+  } catch {
+    throw new AnalysisError(
+      `Die ClaimGuard-API unter ${API_BASE} antwortet nicht. Läuft der Backend-Server?`,
+      "api_unreachable",
+      0,
+    );
+  }
+
+  if (!response.ok) {
+    let code = "pdf_invalid";
+    let message = `PDF-Extraktion fehlgeschlagen (HTTP ${response.status}).`;
+    try {
+      const body = await response.json();
+      const detail = body?.detail ?? body;
+      if (detail?.code) code = detail.code;
+      if (detail?.message) message = detail.message;
+    } catch {
+      // keep defaults
+    }
+    throw new AnalysisError(message, code, response.status);
+  }
+
+  return (await response.json()) as PdfExtractResponse;
+}
+
+export type RewriteBatchResponse = {
+  rewrites: Record<string, string>;
+};
+
+export type PolishResponse = {
+  polished_text: string;
+  change_summary: string;
+};
+
+export type SmartApplyResponse = {
+  rewritten_text: string;
+};
+
+export async function smartApplyClaims(
+  claims: EvaluatedClaim[],
+  inputText: string,
+): Promise<string> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}/api/analyses/smart-apply`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ claims, input_text: inputText }),
+    });
+  } catch {
+    throw new AnalysisError(
+      `Die ClaimGuard-API unter ${API_BASE} antwortet nicht.`,
+      "api_unreachable",
+      0,
+    );
+  }
+  if (!response.ok) {
+    let code = "smart_apply_failed";
+    let message = `Smart-Apply fehlgeschlagen (HTTP ${response.status}).`;
+    try {
+      const body = await response.json();
+      const detail = body?.detail ?? body;
+      if (detail?.code) code = detail.code;
+      if (detail?.message) message = detail.message;
+    } catch {
+      // keep defaults
+    }
+    throw new AnalysisError(message, code, response.status);
+  }
+  const data = (await response.json()) as SmartApplyResponse;
+  return data.rewritten_text ?? "";
+}
+
+export async function polishText(text: string): Promise<PolishResponse> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}/api/analyses/polish`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+  } catch {
+    throw new AnalysisError(
+      `Die ClaimGuard-API unter ${API_BASE} antwortet nicht.`,
+      "api_unreachable",
+      0,
+    );
+  }
+  if (!response.ok) {
+    let code = "polish_failed";
+    let message = `Schluss-Korrektur fehlgeschlagen (HTTP ${response.status}).`;
+    try {
+      const body = await response.json();
+      const detail = body?.detail ?? body;
+      if (detail?.code) code = detail.code;
+      if (detail?.message) message = detail.message;
+    } catch {
+      // keep defaults
+    }
+    throw new AnalysisError(message, code, response.status);
+  }
+  return (await response.json()) as PolishResponse;
+}
+
+export async function rewriteAllClaims(
+  claims: EvaluatedClaim[],
+  inputText: string,
+): Promise<Record<string, string>> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}/api/analyses/rewrite-batch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ claims, input_text: inputText }),
+    });
+  } catch {
+    throw new AnalysisError(
+      `Die ClaimGuard-API unter ${API_BASE} antwortet nicht.`,
+      "api_unreachable",
+      0,
+    );
+  }
+  if (!response.ok) {
+    let code = "rewrite_failed";
+    let message = `Reformulierung fehlgeschlagen (HTTP ${response.status}).`;
+    try {
+      const body = await response.json();
+      const detail = body?.detail ?? body;
+      if (detail?.code) code = detail.code;
+      if (detail?.message) message = detail.message;
+    } catch {
+      // keep defaults
+    }
+    throw new AnalysisError(message, code, response.status);
+  }
+  const data = (await response.json()) as RewriteBatchResponse;
+  return data.rewrites ?? {};
+}
+
+export async function extractUrl(url: string): Promise<UrlExtractResponse> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}/api/extract/url`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+  } catch {
+    throw new AnalysisError(
+      `Die ClaimGuard-API unter ${API_BASE} antwortet nicht. Läuft der Backend-Server?`,
+      "api_unreachable",
+      0,
+    );
+  }
+
+  if (!response.ok) {
+    let code = "url_invalid";
+    let message = `URL-Extraktion fehlgeschlagen (HTTP ${response.status}).`;
+    try {
+      const body = await response.json();
+      const detail = body?.detail ?? body;
+      if (detail?.code) code = detail.code;
+      if (detail?.message) message = detail.message;
+    } catch {
+      // keep defaults
+    }
+    throw new AnalysisError(message, code, response.status);
+  }
+
+  return (await response.json()) as UrlExtractResponse;
 }

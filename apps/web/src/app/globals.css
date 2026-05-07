@@ -87,3 +87,75 @@
     text-wrap: pretty;
   }
 }
+
+/* PROJ-15: print-friendly export. The user clicks "Als PDF speichern" in
+   the report header, the browser opens the print dialog, and the PDF is
+   saved via the OS print pipeline. No server, no Playwright in the MVP. */
+@media print {
+  @page {
+    size: A4;
+    margin: 18mm 14mm;
+  }
+
+  html, body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  /* Hide nav, sidebar, toolbar, and any element flagged as non-print.
+     Inline highlight buttons (created by HighlightedText to wrap claim
+     spans) are kept - those carry the colour-coded markers we want in
+     the PDF output. */
+  [data-print="hide"],
+  header[role="banner"],
+  nav,
+  aside,
+  button:not([data-claim-id]),
+  .no-print {
+    display: none !important;
+  }
+
+  /* Render claim buttons inline like a normal span so they don't break
+     paragraph flow inside the printed text. */
+  button[data-claim-id] {
+    display: inline !important;
+    padding: 0 2pt !important;
+    background: transparent !important;
+    border: 0 !important;
+    text-decoration: underline !important;
+    text-decoration-thickness: 1.5pt !important;
+    color: inherit !important;
+  }
+
+  /* Force the report panel into a single column and let it span the page. */
+  [data-print="report"] {
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: 0 !important;
+  }
+
+  [data-print="report"] article {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    box-shadow: none !important;
+  }
+
+  /* Make sure the disclaimer is printed prominently on the first page. */
+  [data-print="disclaimer"] {
+    display: block !important;
+    margin: 0 0 12mm 0 !important;
+    padding: 8mm !important;
+    border: 1pt solid #000 !important;
+    font-size: 10pt;
+  }
+
+  a[href]::after {
+    content: " (" attr(href) ")";
+    font-size: 0.85em;
+    color: #444;
+  }
+}
+

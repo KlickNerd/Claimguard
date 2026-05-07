@@ -6,7 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.analyses import router as analyses_router
+from app.api.extract import router as extract_router
 from app.api.prompts import router as prompts_router
+from app.api.rewrites import router as rewrites_router
 from app.config import settings
 from app.services.prompt_loader import get_prompt_loader
 
@@ -34,6 +36,8 @@ app.add_middleware(
 
 app.include_router(prompts_router)
 app.include_router(analyses_router)
+app.include_router(extract_router)
+app.include_router(rewrites_router)
 
 
 @app.exception_handler(RequestValidationError)

@@ -1,8 +1,21 @@
-import { Check, Copy, RotateCcw, Scale, Wand2 } from "lucide-react";
+import {
+  BadgeCheck,
+  BookOpen,
+  Check,
+  Copy,
+  ExternalLink,
+  Gavel,
+  Leaf,
+  RotateCcw,
+  Scale,
+  Wand2,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import type {
   EvaluatedClaim,
   EvaluationStatus,
+  RetrievalHit,
+  RetrievalSourceType,
 } from "@/lib/api-client";
 import { StatusPill } from "@/components/site/status-pill";
 
@@ -100,23 +113,12 @@ export function EvaluatedClaimCard({
         </p>
       )}
 
+      {!isApplied && claim.evidence.length > 0 && (
+        <EvidenceSection evidence={claim.evidence} />
+      )}
+
       {!isApplied && claim.legal_hints.length > 0 && (
-        <div className="mt-4 rounded-md bg-muted/40 p-3">
-          <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-            <Scale className="h-3 w-3" aria-hidden />
-            Mögliche Rechtsgrundlage (KI-Schätzung)
-          </div>
-          <ul className="mt-2 space-y-1.5 text-sm">
-            {claim.legal_hints.map((hint, i) => (
-              <li key={i}>
-                <span className="font-mono text-[12px] text-foreground">
-                  {hint.reference}
-                </span>
-                <span className="text-foreground/70"> — {hint.rationale}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+        <LegalHintsSection hints={claim.legal_hints} />
       )}
 
       {claim.rewrite_suggestion && (
@@ -204,5 +206,101 @@ function RevertButton({ onClick }: { onClick: () => void }) {
       <RotateCcw className="h-3 w-3" aria-hidden />
       Rückgängig
     </button>
+  );
+}
+
+const SOURCE_LABEL: Record<RetrievalSourceType, string> = {
+  eu_claim: "EU-Register",
+  regulation: "Rechtsnorm",
+  case_law: "Rechtsprechung",
+  botanical: "Botanical (EFSA)",
+};
+
+const SOURCE_ICON: Record<RetrievalSourceType, typeof BookOpen> = {
+  eu_claim: BadgeCheck,
+  regulation: BookOpen,
+  case_law: Gavel,
+  botanical: Leaf,
+};
+
+function EvidenceSection({ evidence }: { evidence: RetrievalHit[] }) {
+  return (
+    <div className="mt-4 rounded-md border border-status-allowed/30 bg-status-allowed-bg/30 p-3">
+      <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-status-allowed">
+        <BadgeCheck className="h-3 w-3" aria-hidden />
+        Belege aus der Wissensbasis
+      </div>
+      <ul className="mt-2 space-y-2">
+        {evidence.map((hit) => {
+          const Icon = SOURCE_ICON[hit.source_type];
+          return (
+            <li
+              key={hit.chunk_id}
+              className="rounded border border-border/60 bg-background/80 p-2"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <Icon className="h-3 w-3" aria-hidden />
+                  {SOURCE_LABEL[hit.source_type]}
+                </span>
+                <span className="font-mono text-[10px] text-muted-foreground">
+                  Score {hit.score.toFixed(2)}
+                </span>
+              </div>
+              <div className="mt-1 font-mono text-[12px] text-foreground">
+                {hit.reference}
+              </div>
+              <p className="mt-1 text-[13px] leading-relaxed text-foreground/85">
+                {hit.snippet}
+              </p>
+              {hit.url && (
+                <a
+                  href={hit.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+                >
+                  <ExternalLink className="h-3 w-3" aria-hidden />
+                  Quelle öffnen
+                </a>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+function LegalHintsSection({ hints }: { hints: { reference: string; rationale: string; verified: boolean; chunk_id: string | null; url: string | null }[] }) {
+  const allVerified = hints.every((h) => h.verified);
+  return (
+    <div className="mt-3 rounded-md bg-muted/40 p-3">
+      <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <Scale className="h-3 w-3" aria-hidden />
+        Rechtliche Einordnung{allVerified ? "" : " (teils KI-Schätzung)"}
+      </div>
+      <ul className="mt-2 space-y-1.5 text-sm">
+        {hints.map((hint, i) => (
+          <li key={i}>
+            <span className="font-mono text-[12px] text-foreground">
+              {hint.reference}
+            </span>
+            {hint.verified ? (
+              <span className="ml-1.5 inline-flex items-center gap-0.5 rounded-full bg-status-allowed-bg px-1.5 py-0 text-[10px] font-medium text-status-allowed align-middle">
+                <BadgeCheck className="h-2.5 w-2.5" aria-hidden />
+                verifiziert
+              </span>
+            ) : (
+              <span className="ml-1.5 inline-block rounded-full bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground align-middle">
+                KI-Schätzung
+              </span>
+            )}
+            <span className="text-foreground/70"> — {hint.rationale}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

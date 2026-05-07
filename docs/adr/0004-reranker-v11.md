@@ -1,9 +1,20 @@
 # ADR-0004: Reranker erst in V1.1 einführen
 
-**Status:** Accepted (2026-04-24)
+**Status:** Revisited 2026-05-04 — Reranker doch im MVP, BGE-Reranker-v2-m3 in-process
 **Datum:** 2026-04-23
 **Kontext:** PROJ-9 (Hybrid Retrieval)
 **Verwandte Backlog-Frage:** 5.3 Punkt 3
+
+> **Update 2026-05-04:** In der ersten Inhouse-Nutzung zeigte sich, dass
+> die multilingualen Cosine-Scores für deutsche Claims fast immer im
+> Band 0.78–0.86 landen — die RRF-Reihenfolge fügte deshalb regelmäßig
+> thematisch fragwürdige Treffer (z. B. „Phosphor"-EU-Eintrag bei einer
+> Vitalpilze-Werbung) in die Top-3-Anzeige ein. Wir haben **BGE-Reranker-v2-m3
+> in-process** (Apache-2.0, ~ 568 MB) hinter die RRF-Fusion gesetzt und die
+> Originalentscheidung damit revidiert. Der Reranker läuft im selben
+> FastAPI-Prozess wie das E5-Embedding (kein extra Container), siehe
+> [`app/services/reranker.py`](../../apps/api/app/services/reranker.py).
+> Latenz +50–100 ms pro Claim, Top-3-Qualität deutlich verbessert.
 
 ## Kontext
 

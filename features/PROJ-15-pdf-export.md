@@ -1,9 +1,46 @@
 # PROJ-15: PDF-Export des Reports
 
-## Status: Planned
+## Status: In Progress
 **Created:** 2026-04-23
-**Last Updated:** 2026-04-23
+**Last Updated:** 2026-05-01
 **Backlog-Referenz:** F-014
+
+## Implementation Notes (2026-05-01)
+
+**Was umgesetzt ist (MVP-Stand):**
+- Client-side Print-Pipeline statt server-Playwright. Begründung unten.
+- Globale Print-Styles in [`globals.css`](../apps/web/src/app/globals.css)
+  (`@media print`): A4 mit 18 mm × 14 mm Margin, Hide aller `nav`/`aside`/
+  `button`/`[data-print="hide"]`, Force-Block für `[data-print="report"]`,
+  `break-inside: avoid` pro Claim-Card, Disclaimer-Block prominent oberhalb
+  der Cards, Anchor-URLs werden nach dem Linktext mit ausgegeben.
+- Der Report-Container im DoneState ([`apps/web/src/app/app/page.tsx`](../apps/web/src/app/app/page.tsx))
+  trägt `data-print="report"`; ein extra Disclaimer-Block mit
+  `data-print="disclaimer"` ist im Screen-Mode versteckt und nur im
+  Print-Mode sichtbar.
+- Im Report-Header sitzt jetzt ein „Als PDF speichern"-Button. Klick setzt
+  temporär `document.title` auf `ClaimGuard-Report-{id8}-{YYYY-MM-DD}` (das
+  ist in Chrome/Safari/Firefox der Default-Filename im Print-Dialog) und
+  ruft `window.print()` auf.
+- Header trägt ID, Erstellungsdatum (lokalisiert) und `source_reference` der
+  Analyse — entspricht den Deckblatt-Anforderungen aus der Spec.
+
+**Bewusst nicht im MVP (Abweichungen vom Spec):**
+- **Kein server-side Playwright/WeasyPrint.** Spec sieht Playwright vor,
+  aber die client-Print-Pipeline reicht für den 1-User-pro-Browser-MVP
+  und spart einen weiteren Long-Running-Service auf dem VPS. Server-Side
+  wird in V1.1 nötig, wenn wir Reports per E-Mail / API-Call versenden
+  oder White-Label-Branding einbauen. Bis dahin ist der Browser-PDF
+  konsistent (gleicher Renderer wie die Web-View) und kostet nichts.
+- Kein S3-PDF-Cache (24 h) — kommt mit V1.1 server-side.
+- Keine Rate-Limit-Logik im Frontend (MVP-Standard: Browser limitiert sich
+  selbst, weil der User im Print-Dialog steht).
+- Kein dediziertes Deckblatt mit Logo — ergibt sich aus dem Header-Block
+  und dem Print-Disclaimer; Logo-Embedding folgt mit Print-Branding-Polish
+  in PROJ-18-Update.
+- Kein Truncation auf 100 Claims — wir verlassen uns auf
+  `break-inside: avoid` und das Browser-Pagination, bis Reports tatsächlich
+  > 50 Seiten produzieren.
 
 ## Dependencies
 - PROJ-14 (Report-Darstellung) — Quelle der Daten

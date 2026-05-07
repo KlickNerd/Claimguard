@@ -1,0 +1,120 @@
+# Production stack. Run with:
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+#
+# Differences from the dev compose:
+#   * Adds the backend (api) and frontend (web) as built containers
+#   * Adds Caddy as the public reverse proxy with auto-TLS
+#   * Internal services (redis/qdrant/postgres) are no longer port-
+#     forwarded to the host - only Caddy listens on 80/443
+#   * Models are cached on a named volume so a backend restart doesn't
+#     re-download the 1 GB E5 + BGE artefacts
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: claimguard-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    command: >
+      redis-server
+      --appendonly yes
+      --save 60 1000
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.0
+    container_name: claimguard-qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: claimguard-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-claimguard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-claimguard}
+      POSTGRES_DB: ${POSTGRES_DB:-claimguard}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-claimguard} -d ${POSTGRES_DB:-claimguard}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: claimguard-api
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: production
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ANTHROPIC_MODEL_DETECTION: ${ANTHROPIC_MODEL_DETECTION:-claude-sonnet-4-6}
+      ANTHROPIC_MODEL_EVALUATION: ${ANTHROPIC_MODEL_EVALUATION:-claude-sonnet-4-6}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-base}
+      REDIS_URL: redis://redis:6379/0
+      QDRANT_URL: http://qdrant:6333
+      KB_DB_URL: postgresql://${POSTGRES_USER:-claimguard}:${POSTGRES_PASSWORD:-claimguard}@postgres:5432/${POSTGRES_DB:-claimguard}
+      CORS_ORIGINS: '["https://${DOMAIN}"]'
+    volumes:
+      # Persistent ML-model cache. Saves 1 GB+ of redownloads on every
+      # container restart.
+      - models:/models
+    depends_on:
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: https://${DOMAIN}
+    container_name: claimguard-web
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: claimguard-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - web
+      - api
+
+volumes:
+  redis-data:
+  qdrant-data:
+  postgres-data:
+  models:
+  caddy-data:
+  caddy-config:

@@ -1,8 +1,8 @@
 # PROJ-10: Claim-Evaluation
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-04-23
-**Last Updated:** 2026-04-23
+**Last Updated:** 2026-05-01
 **Backlog-Referenz:** F-012
 
 ## Dependencies
@@ -183,6 +183,64 @@ Erwartete Kostenreduktion: ~ 40–60 % bei typischer Analyse mit 5–15 Claims. 
 - Kein Legal-Review-Loop (Mensch im Hot-Path) — V2 Enterprise-Feature
 - Kein Streaming der Teilergebnisse an den Client — Analyse erscheint komplett am Ende
 - Kein Feedback-Loop (User-Daumen-runter trainiert Modell) — DSGVO-heikel, V2
+
+## Implementation Notes (2026-05-01)
+
+**Was umgesetzt ist (MVP-Stand):**
+- `ClaimEvaluator` hat zwei Modi: `quick` (Sonnet, ohne KB) als Bridge-Variante,
+  `full` (Opus 4.7 + System-Prompt + Evidence im User-Prompt) als Default.
+- System-Prompt [`claim_evaluation_system_v1.0.0.md`](../apps/api/app/prompts/claim_evaluation_system_v1.0.0.md)
+  trägt HCVO/LMIV/LFGB-Regeln, Confidence-Disziplin, Quellen-Disziplin.
+  Versionierter User-Prompt [`claim_evaluation_v1.0.0.md`](../apps/api/app/prompts/claim_evaluation_v1.0.0.md)
+  rendert Claim + Evidence (RetrievalHits aus PROJ-9) je Aufruf.
+- **Disease-Shortcut:** `claim_type == "disease_based"` umgeht den LLM-Call und liefert
+  direkt `forbidden` mit fixiertem Reasoning + LegalHints zu Art. 7 LMIV / § 12 LFGB.
+- **Halluzinations-Check:** LLM-Hints müssen ein `chunk_id` aus dem Evidence-Pool
+  zitieren. `_build_hints` markiert `verified=True` nur dann; unbekannte chunk_ids
+  werden auf `None` gesetzt und der Hint bleibt unverified (statt komplett zu droppen,
+  damit das LLM-Reasoning lesbar bleibt).
+- **Sonnet-Fallback:** bei `AnthropicServiceError` aus dem Opus-Call wird derselbe
+  System+User-Prompt nochmal mit Sonnet gefahren; das Ergebnis bekommt
+  `evaluation_prompt_version = "1.0.0+sonnet-fallback"` als Audit-Marker.
+- **Pipeline-Flow** (`DetectionOnlyPipeline.run`): detect → `_gather_evidence`
+  (parallel pro Claim) → `evaluator.evaluate_all(evidence_per_claim=…)`. Retrieval
+  ist Soft-Fail (Qdrant-Outage → leere Evidence + UI-Warning, kein Hard-Stop).
+- **Confidence-Disziplin:** Evaluator override status auf `unclear` wenn confidence
+  < 0.6, unabhängig vom LLM-Output.
+- Tool-Schema `record_claim_evaluation` ist um `legal_hints[].chunk_id`-Feld erweitert.
+
+**Smoke-Test 2026-05-01 (5 Claims, 14.3 s end-to-end, 18.3k in / 2.5k out tokens):**
+- "Magnesium trägt zu einer normalen Muskelfunktion bei" → `allowed`, conf 0.97,
+  hint `vo432-086` ✓ verified
+- "unterstützt das Nervensystem" → `allowed` als zulässige Paraphrase, conf 0.88,
+  hint `vo432-085` ✓ verified
+- "Vitamin D stärkt zusätzlich das Immunsystem" → `borderline` (über Spec hinaus),
+  conf 0.78, hint `vo432-189` ✓ verified, Rewrite zur zugelassenen Wortwahl
+- "schützt vor Erkältungen" → `forbidden` via Disease-Shortcut, **kein LLM-Call**
+  (Token-Save)
+- "Hilft beim Abnehmen / macht schlank über Nacht" → `forbidden`, conf 0.95,
+  hints `1924/2006-art12-para3` + `vo432-052` ✓ verified, präziser Rewrite mit
+  Glucomannan-Alternative
+
+**Update 2026-05-04 — Sonnet als Default + Prompt Caching:**
+- Default-Evaluator von **Opus 4.7 → Sonnet 4.6** umgestellt (siehe
+  [ADR-0007](../docs/adr/0007-evaluation-model-sonnet.md)). Opus bleibt
+  per Env-Var ``ANTHROPIC_MODEL_EVALUATION=claude-opus-4-7`` aktivierbar.
+  Cost-Effekt: ~ 5× günstiger pro Claim, ~ 2-3× schneller.
+- **Anthropic Prompt Caching** im System-Prompt aktiviert
+  ([`anthropic_client.create_message_with_tool`](../apps/api/app/services/anthropic_client.py)
+  hat Param `cache_system: bool`). Pro Mehrclaim-Analyse zahlt nur die
+  erste Claim die volle System-Prompt-Token-Kosten, alle weiteren lesen
+  aus dem Cache mit 90 % Rabatt.
+- Insgesamt: ~ 70-85 % Cost-Reduktion gegenüber dem alten
+  Opus-ohne-Cache-Pfad.
+
+**Bewusst nicht im MVP, aber als Folgetasks offen:**
+- Legal-Basis als eigenes strukturiertes Feld auf `EvaluatedClaim` (aktuell
+  reusen wir `LegalHint` mit `verified`+`chunk_id`).
+- Token-Budget-Tracking pro Analyse mit Hard-Abort > 100k.
+- Eval-Set mit annotierten Verdicts für Precision/Recall-Gate.
+- pytest-Coverage für Disease-Shortcut, Halluzinations-Check, Sonnet-Fallback.
 
 ## QA Test Results
 _To be added by /qa_

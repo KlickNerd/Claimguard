@@ -32,6 +32,13 @@ class AnalysisResponse(BaseModel):
     model: str
     input_tokens: int
     output_tokens: int
+    estimated_cost_usd: float = Field(
+        default=0.0,
+        description=(
+            "Conservative upper-bound cost estimate in USD - prompt caching "
+            "in the evaluator usually drops the real bill below this number."
+        ),
+    )
     latency_ms: int
     created_at: datetime = Field(default_factory=_utcnow)
     warnings: list[str] = Field(default_factory=list)

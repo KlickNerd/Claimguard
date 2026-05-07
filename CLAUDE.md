@@ -8,9 +8,9 @@
 - **Frontend:** Next.js 16 (App Router), TypeScript, Tailwind CSS, shadcn/ui, Zod + react-hook-form
 - **Backend:** Python 3.12, FastAPI, Pydantic v2, uv (Paketmanager)
 - **Async-Worker:** ARQ + Redis (siehe [ADR-0002](docs/adr/0002-async-worker-arq.md))
-- **Datenbanken:** Supabase Postgres (EU), Qdrant self-hosted
-- **Embeddings:** jina-embeddings-v3 self-hosted (EU, siehe [ADR-0003](docs/adr/0003-embedding-model.md))
-- **LLM:** Claude Sonnet 4.6 (Detection), Claude Opus 4.7 (Evaluation) mit Zero-Data-Retention
+- **Datenbanken:** Supabase Postgres (EU, Produktion), lokal Postgres-16-Container (auch Hybrid-Retrieval-FTS), Qdrant self-hosted
+- **Embeddings:** `intfloat/multilingual-e5-base` in-process (Apache-2.0, EU, siehe [ADR-0006](docs/adr/0006-embedding-model-e5.md))
+- **LLM:** Claude Sonnet 4.6 (Detection + Evaluation, mit Prompt Caching auf dem System-Prompt), Opus 4.7 als optionales Premium-Modell. Alle Calls mit Zero-Data-Retention.
 - **Payments:** Stripe
 - **Hosting:** Hostinger VPS Frankfurt (EU-Souveränität, kein US-Vendor-Lock-in)
 - **Reverse Proxy:** Caddy (TLS automatisch)
@@ -31,7 +31,7 @@ apps/
     app/
       api/          FastAPI Routes
       pipelines/    Orchestrierung: Detection → Retrieval → Evaluation
-      services/     Clients: Anthropic, Qdrant, Postgres, Redis, jina
+      services/     Clients: Anthropic, Qdrant, Postgres, Redis, Embeddings
       schemas/      Pydantic-Modelle
       cache/        Redis-Cache
       prompts/      Versionierte Markdown-Prompts (PROJ-7)
@@ -40,11 +40,11 @@ apps/
     tests/          pytest
 docs/
   PRD.md            Produkt-Anforderungen
-  adr/              Architecture Decision Records (0001–0005 Accepted)
+  adr/              Architecture Decision Records (0001/0002/0004/0005/0006 Accepted, 0003 Superseded)
 features/
   INDEX.md          Feature-Status-Übersicht
   PROJ-*.md         Feature-Spezifikationen
-docker-compose.yml  Lokale Services: Redis, Qdrant, jina-embeddings
+docker-compose.yml  Lokale Services: Redis, Qdrant, Postgres
 ```
 
 ## Development Workflow
@@ -75,7 +75,7 @@ Alle Features in `features/INDEX.md`. Jede Skill liest ihn beim Start und aktual
 ## Build & Test Commands
 
 ```bash
-# Infrastruktur (Redis, Qdrant, jina-embeddings)
+# Infrastruktur (Redis, Qdrant, Postgres)
 pnpm services:up        # docker compose up -d
 pnpm services:down
 pnpm services:logs

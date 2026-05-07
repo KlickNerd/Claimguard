@@ -1,9 +1,15 @@
 # ADR-0003: Embedding-Modell jina-embeddings-v3 (self-hosted)
 
-**Status:** Accepted (2026-04-24)
+**Status:** Superseded by [ADR-0006](0006-embedding-model-e5.md) (2026-05-01)
 **Datum:** 2026-04-23
 **Kontext:** PROJ-4/5/6 (Wissensbasis-Indexierung), PROJ-9 (Hybrid Retrieval)
 **Verwandte Backlog-Frage:** 5.3 Punkt 2
+
+> **Hinweis (2026-05-01):** Beim Bau von PROJ-9 wurde diese Entscheidung
+> revidiert — siehe [ADR-0006](0006-embedding-model-e5.md). Kurz: jina-v3
+> verlangt `trust_remote_code` und einen separaten Container, beides
+> wollen wir im MVP nicht tragen. Stattdessen läuft `multilingual-e5-base`
+> (Apache-2.0) in-process im FastAPI-Prozess.
 
 ## Kontext
 

@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   Activity,
   AlertCircle,
@@ -32,6 +34,9 @@ import {
 import { DetectionClaimCard } from "@/components/app/detection-claim-card";
 import { EvaluatedClaimCard } from "@/components/app/evaluated-claim-card";
 import { HighlightedText } from "@/components/app/highlighted-text";
+import { MarkdownEditor } from "@/components/app/markdown-editor";
+import { PdfDropzone } from "@/components/app/pdf-dropzone";
+import { UrlInput } from "@/components/app/url-input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { KPIS } from "@/lib/mock-analyses";
@@ -39,9 +44,13 @@ import { DEMO_INPUT } from "@/lib/demo-data";
 import {
   AnalysisError,
   createAnalysis,
+  polishText,
+  rewriteAllClaims,
+  smartApplyClaims,
   type AnalysisResponse,
   type EvaluatedClaim,
 } from "@/lib/api-client";
+import { downloadAsDoc } from "@/lib/export-doc";
 
 const TABS = [
   { id: "text" as const, label: "Text", icon: FileText },
@@ -56,6 +65,46 @@ const STEP_DELAYS_MS = [500, 500, 500];
 const MIN_CHARS = 50;
 const MAX_CHARS = 50_000;
 const WARN_THRESHOLD = 0.9;
+
+const QUOTE_PAIRS: Array<readonly [string, string]> = [
+  ["„", "“"],
+  ["“", "”"],
+  ["«", "»"],
+  ["'", "'"],
+  ["‘", "’"],
+  ['"', '"'],
+];
+
+const TERMINAL_PUNCT = ".!?";
+
+/** Make the rewrite slot cleanly into the surrounding text:
+ *  - strip wrapping quotes the LLM occasionally leaves on the rewrite
+ *  - match terminal punctuation to the original claim's so a mid-
+ *    sentence claim doesn't end up with ". und …" after the splice.
+ */
+function normaliseRewrite(rewrite: string, originalClaim: string): string {
+  let cleaned = rewrite.trim();
+  // Drop matched quote pairs (possibly nested).
+  while (cleaned.length >= 2) {
+    const first = cleaned[0];
+    const last = cleaned[cleaned.length - 1];
+    const match = QUOTE_PAIRS.find(([o, c]) => first === o && last === c);
+    if (!match) break;
+    cleaned = cleaned.slice(1, -1).trim();
+  }
+  if (!cleaned) return cleaned;
+  const originalTrim = originalClaim.trimEnd();
+  const originalLast = originalTrim.slice(-1);
+  const cleanedLast = cleaned.slice(-1);
+  if (TERMINAL_PUNCT.includes(originalLast)) {
+    if (!TERMINAL_PUNCT.includes(cleanedLast)) {
+      cleaned = cleaned.replace(/\s+$/, "") + originalLast;
+    }
+  } else if (TERMINAL_PUNCT.includes(cleanedLast)) {
+    cleaned = cleaned.replace(/[.!?]+\s*$/, "").trimEnd();
+  }
+  return cleaned;
+}
 
 /**
  * Apply rewrites in descending position order so earlier claims keep their
@@ -72,9 +121,13 @@ function applyRewritesToText(
 
   let text = originalText;
   for (const claim of ordered) {
+    const rewrite = normaliseRewrite(
+      claim.rewrite_suggestion ?? "",
+      claim.claim_text,
+    );
     text =
       text.slice(0, claim.position_start) +
-      (claim.rewrite_suggestion ?? "") +
+      rewrite +
       text.slice(claim.position_end);
   }
   return text;
@@ -90,16 +143,15 @@ export default function AppHomePage() {
   const [activeClaimId, setActiveClaimId] = useState<string | null>(null);
   const [appliedIds, setAppliedIds] = useState<Set<string>>(new Set());
   const [copyHint, setCopyHint] = useState(false);
+  const [pdfFilename, setPdfFilename] = useState<string | null>(null);
+  const [sourceUrl, setSourceUrl] = useState<string | null>(null);
+  const [isRewritingAll, setIsRewritingAll] = useState(false);
+  const [rewriteAllError, setRewriteAllError] = useState<string | null>(null);
+  const [polishedText, setPolishedText] = useState<string | null>(null);
+  const [polishSummary, setPolishSummary] = useState<string>("");
+  const [isPolishing, setIsPolishing] = useState(false);
+  const [polishError, setPolishError] = useState<string | null>(null);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const editorRef = useRef<HTMLTextAreaElement | null>(null);
-
-  useEffect(() => {
-    const el = editorRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    const next = Math.min(Math.max(el.scrollHeight, 240), 720);
-    el.style.height = `${next}px`;
-  }, [input, phase]);
 
   useEffect(
     () => () => {
@@ -131,7 +183,16 @@ export default function AppHomePage() {
     }
 
     try {
-      const response = await createAnalysis({ input_text: text });
+      const sourceType: "text" | "url" | "pdf" = pdfFilename
+        ? "pdf"
+        : sourceUrl
+          ? "url"
+          : "text";
+      const response = await createAnalysis({
+        input_text: text,
+        source_type: sourceType,
+        source_reference: pdfFilename ?? sourceUrl ?? null,
+      });
       clearTimers();
       setCurrentStep(PIPELINE_STEPS.length);
       setResult(response);
@@ -157,6 +218,60 @@ export default function AppHomePage() {
     setError(null);
     setActiveClaimId(null);
     setAppliedIds(new Set());
+    setPdfFilename(null);
+    setSourceUrl(null);
+    setPolishedText(null);
+    setPolishSummary("");
+    setPolishError(null);
+  };
+
+  /** Run Sonnet over the rewritten text to fix grammar / transitions
+   *  without touching compliance. Result replaces the displayed body
+   *  until reverted. */
+  const polish = async () => {
+    if (!result || isPolishing) return;
+    const sourceText = applyRewritesToText(
+      result.input_text,
+      result.evaluated_claims,
+      appliedIds,
+    );
+    setIsPolishing(true);
+    setPolishError(null);
+    try {
+      const response = await polishText(sourceText);
+      setPolishedText(response.polished_text);
+      setPolishSummary(response.change_summary);
+    } catch (err) {
+      if (err instanceof AnalysisError) {
+        setPolishError(err.message);
+      } else if (err instanceof Error) {
+        setPolishError(err.message);
+      } else {
+        setPolishError("Schluss-Korrektur fehlgeschlagen.");
+      }
+    } finally {
+      setIsPolishing(false);
+    }
+  };
+
+  const revertPolish = () => {
+    setPolishedText(null);
+    setPolishSummary("");
+    setPolishError(null);
+  };
+
+  const onPdfExtracted = (text: string, sourceReference: string) => {
+    setInput(text);
+    setPdfFilename(sourceReference);
+    setSourceUrl(null);
+    setActiveTab("text");
+  };
+
+  const onUrlExtracted = (text: string, sourceReference: string) => {
+    setInput(text);
+    setSourceUrl(sourceReference);
+    setPdfFilename(null);
+    setActiveTab("text");
   };
 
   const length = input.length;
@@ -221,6 +336,67 @@ export default function AppHomePage() {
 
   const revertAll = () => {
     setAppliedIds(new Set());
+  };
+
+  /** Ask Claude to (a) fill in any missing rewrite suggestions, then
+   *  (b) rewrite the whole text *paragraph by paragraph* so the
+   *  reformulations are organically woven into the surrounding
+   *  sentences instead of spliced in as 1:1 replacements.
+   *
+   *  Result lands in ``polishedText``: the same view layer that the
+   *  Polish button already uses. The user sees the cleaned, in-context
+   *  rewrite directly, with a "Rückgängig" option. */
+  const rewriteAll = async () => {
+    if (!result || isRewritingAll) return;
+    const targets = result.evaluated_claims.filter(
+      (c) => c.status !== "allowed",
+    );
+    if (targets.length === 0) return;
+
+    setIsRewritingAll(true);
+    setRewriteAllError(null);
+    try {
+      // Step 1: ensure every problematic claim has a rewrite suggestion.
+      const rewrites = await rewriteAllClaims(targets, result.input_text);
+      const merged = result.evaluated_claims.map((c) =>
+        rewrites[c.id]
+          ? { ...c, rewrite_suggestion: rewrites[c.id] }
+          : c,
+      );
+      setResult({ ...result, evaluated_claims: merged });
+      setAppliedIds(
+        new Set(
+          merged
+            .filter(
+              (c) =>
+                c.rewrite_suggestion &&
+                c.status !== "allowed",
+            )
+            .map((c) => c.id),
+        ),
+      );
+
+      // Step 2: paragraph-aware rewrite of the full text. Sonnet sees
+      // each paragraph + the claim list that touches it, and produces
+      // a clean marketing-grade rewrite. Replaces the naive string-
+      // splice that was producing nonsense like
+      // `"Vitamin D trägt zu …"` mid-sentence.
+      const rewrittenText = await smartApplyClaims(merged, result.input_text);
+      if (rewrittenText && rewrittenText.trim()) {
+        setPolishedText(rewrittenText);
+        setPolishSummary("Absatzweise neu geschrieben für sauberen Lesefluss.");
+      }
+    } catch (err) {
+      if (err instanceof AnalysisError) {
+        setRewriteAllError(err.message);
+      } else if (err instanceof Error) {
+        setRewriteAllError(err.message);
+      } else {
+        setRewriteAllError("Reformulierung fehlgeschlagen.");
+      }
+    } finally {
+      setIsRewritingAll(false);
+    }
   };
 
   const copyEditedText = async () => {
@@ -343,52 +519,55 @@ export default function AppHomePage() {
               </div>
 
               {phase === "done" && result ? (
-                editedText ? (
-                  <EditedTextView
-                    text={editedText}
-                    appliedCount={appliedIds.size}
-                  />
-                ) : (
-                  <HighlightedText
-                    text={result.input_text}
-                    detectedClaims={result.detected_claims}
-                    evaluatedClaims={result.evaluated_claims}
-                    onClaimClick={handleClaimClick}
-                    activeClaimId={activeClaimId}
-                  />
-                )
+                <div className="flex flex-1 flex-col">
+                  {polishedText ? (
+                    <PolishedView
+                      text={polishedText}
+                      summary={polishSummary}
+                      onRevert={revertPolish}
+                    />
+                  ) : (
+                    <>
+                      {appliedIds.size > 0 && (
+                        <div className="mx-5 mt-5 inline-flex w-fit items-center gap-1.5 rounded-full bg-status-allowed-bg px-2.5 py-1 text-[11px] font-medium text-status-allowed">
+                          <CheckCheck className="h-3 w-3" aria-hidden />
+                          {appliedIds.size} Reformulierung
+                          {appliedIds.size > 1 ? "en" : ""} übernommen — bearbeitete Version
+                        </div>
+                      )}
+                      <HighlightedText
+                        text={result.input_text}
+                        detectedClaims={result.detected_claims}
+                        evaluatedClaims={result.evaluated_claims}
+                        onClaimClick={handleClaimClick}
+                        activeClaimId={activeClaimId}
+                        appliedIds={appliedIds}
+                      />
+                    </>
+                  )}
+                </div>
               ) : (
                 <>
                   {activeTab === "text" && (
-                    <div className="flex-1 p-5">
-                      <textarea
-                        ref={editorRef}
+                    <div className="flex-1">
+                      <MarkdownEditor
                         value={input}
-                        onChange={(e) =>
-                          setInput(e.target.value.slice(0, MAX_CHARS))
-                        }
+                        onChange={(md) => setInput(md.slice(0, MAX_CHARS))}
                         disabled={phase === "running"}
-                        maxLength={MAX_CHARS}
-                        className="block min-h-[240px] w-full resize-none border-0 bg-transparent font-serif text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/70 disabled:opacity-70"
-                        placeholder="Werbetext einfügen…"
                       />
                     </div>
                   )}
                   {activeTab === "url" && (
-                    <div className="flex h-[240px] flex-col items-center justify-center gap-2 text-center">
-                      <Link2 className="h-6 w-6 text-muted-foreground" aria-hidden />
-                      <p className="text-sm text-muted-foreground">
-                        URL-Analyse folgt in einem nächsten Schritt.
-                      </p>
-                    </div>
+                    <UrlInput
+                      onExtracted={onUrlExtracted}
+                      disabled={phase === "running"}
+                    />
                   )}
                   {activeTab === "pdf" && (
-                    <div className="flex h-[240px] flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border/70 text-center">
-                      <Upload className="h-6 w-6 text-muted-foreground" aria-hidden />
-                      <p className="text-sm text-muted-foreground">
-                        PDF-Upload folgt mit PROJ-12.
-                      </p>
-                    </div>
+                    <PdfDropzone
+                      onExtracted={onPdfExtracted}
+                      disabled={phase === "running"}
+                    />
                   )}
                 </>
               )}
@@ -463,8 +642,14 @@ export default function AppHomePage() {
               <div className="flex items-center justify-between border-b border-border/60 px-5 py-3">
                 <h2 className="text-sm font-medium">Ergebnisse</h2>
                 {phase === "done" && result && (
-                  <span className="font-mono text-[11px] text-muted-foreground">
-                    {(result.latency_ms / 1000).toFixed(1)} s · {result.input_tokens}/{result.output_tokens} Tokens
+                  <span
+                    className="font-mono text-[11px] text-muted-foreground"
+                    title="Obergrenze – mit aktivem Prompt-Caching liegt die echte Anthropic-Rechnung in der Regel deutlich darunter."
+                  >
+                    {(result.latency_ms / 1000).toFixed(1)} s ·{" "}
+                    {result.input_tokens.toLocaleString("de-DE")}/
+                    {result.output_tokens.toLocaleString("de-DE")} Tokens · ≤ ${" "}
+                    {result.estimated_cost_usd.toFixed(2)}
                   </span>
                 )}
               </div>
@@ -488,6 +673,13 @@ export default function AppHomePage() {
                   onRevertClaim={revertClaim}
                   onApplyAll={applyAll}
                   onRevertAll={revertAll}
+                  onRewriteAll={() => void rewriteAll()}
+                  isRewritingAll={isRewritingAll}
+                  rewriteAllError={rewriteAllError}
+                  onPolish={() => void polish()}
+                  isPolishing={isPolishing}
+                  polishError={polishError}
+                  polishedText={polishedText}
                 />
               )}
             </div>
@@ -573,23 +765,39 @@ function ErrorState({
   );
 }
 
-function EditedTextView({
+/** Cleaned final view shown after a successful Polish pass. No
+ *  highlights here - the position indices from detection no longer line
+ *  up with the polished text, and the user is past the verification
+ *  phase anyway. */
+function PolishedView({
   text,
-  appliedCount,
+  summary,
+  onRevert,
 }: {
   text: string;
-  appliedCount: number;
+  summary: string;
+  onRevert: () => void;
 }) {
   return (
-    <div className="overflow-y-auto px-5 py-5">
-      <div className="mb-3 inline-flex items-center gap-1.5 rounded-full bg-status-allowed-bg px-2.5 py-1 text-[11px] font-medium text-status-allowed">
-        <CheckCheck className="h-3 w-3" aria-hidden />
-        {appliedCount} Reformulierung
-        {appliedCount > 1 ? "en" : ""} übernommen – bearbeitete Version
+    <div className="flex flex-1 flex-col">
+      <div className="mx-5 mt-5 flex flex-wrap items-center justify-between gap-2 rounded-md border border-status-allowed/30 bg-status-allowed-bg/40 px-3 py-2 text-xs text-status-allowed">
+        <span className="inline-flex items-center gap-1.5 font-medium">
+          <Sparkles className="h-3 w-3" aria-hidden />
+          Schluss-Korrektur angewandt
+          {summary && <span className="font-normal text-foreground/70">— {summary}</span>}
+        </span>
+        <button
+          type="button"
+          onClick={onRevert}
+          className="inline-flex items-center gap-1 rounded text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <RotateCcw className="h-3 w-3" aria-hidden />
+          Rückgängig
+        </button>
       </div>
-      <p className="whitespace-pre-wrap font-serif text-[15px] leading-[1.85] text-foreground">
-        {text}
-      </p>
+      <div className="prose prose-sm max-w-none overflow-y-auto px-5 py-5 font-serif text-[15px] leading-[1.85] text-foreground prose-headings:font-serif prose-headings:tracking-tight prose-headings:text-foreground prose-strong:text-foreground prose-a:text-primary prose-li:my-1">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+      </div>
     </div>
   );
 }
@@ -605,6 +813,13 @@ function DoneState({
   onRevertClaim,
   onApplyAll,
   onRevertAll,
+  onRewriteAll,
+  isRewritingAll,
+  rewriteAllError,
+  onPolish,
+  isPolishing,
+  polishError,
+  polishedText,
 }: {
   result: AnalysisResponse;
   counts: {
@@ -623,6 +838,13 @@ function DoneState({
   onRevertClaim: (id: string) => void;
   onApplyAll: () => void;
   onRevertAll: () => void;
+  onRewriteAll: () => void;
+  isRewritingAll: boolean;
+  rewriteAllError: string | null;
+  onPolish: () => void;
+  isPolishing: boolean;
+  polishError: string | null;
+  polishedText: string | null;
 }) {
   const detectedNotEvaluated = result.detected_claims.filter(
     (d) => !result.evaluated_claims.some((e) => e.id === d.id),
@@ -630,8 +852,70 @@ function DoneState({
   const totalApplicable = applicableClaims.length;
   const allApplied = totalApplicable > 0 && appliedIds.size === totalApplicable;
 
+  const exportPdf = () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const shortId = result.id.slice(0, 8);
+    const previousTitle = document.title;
+    document.title = `ClaimGuard-Report-${shortId}-${today}`;
+    try {
+      window.print();
+    } finally {
+      document.title = previousTitle;
+    }
+  };
+
+  const exportDoc = async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const shortId = result.id.slice(0, 8);
+    const text = polishedText
+      ? polishedText
+      : applyRewritesToText(
+          result.input_text,
+          result.evaluated_claims,
+          appliedIds,
+        );
+    const suffix = polishedText
+      ? "-final"
+      : appliedIds.size > 0
+        ? "-bearbeitet"
+        : "";
+    await downloadAsDoc(text, `ClaimGuard-${shortId}-${today}${suffix}`);
+  };
+
   return (
-    <div className="flex-1 space-y-3 overflow-y-auto p-5">
+    <div data-print="report" className="flex-1 space-y-3 overflow-y-auto p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="font-serif text-lg font-semibold tracking-tight">
+            ClaimGuard-Analysebericht
+          </h2>
+          <p className="text-xs text-muted-foreground">
+            ID {result.id.slice(0, 8)} · {new Date(result.created_at).toLocaleString("de-DE")}
+            {result.source_reference && ` · Quelle: ${result.source_reference}`}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => void exportDoc()}>
+            <FileText className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            Als Word speichern
+          </Button>
+          <Button variant="outline" size="sm" onClick={exportPdf}>
+            <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            Als PDF speichern
+          </Button>
+        </div>
+      </div>
+
+      <div
+        data-print="disclaimer"
+        className="hidden rounded-md border border-border/60 bg-card px-4 py-3 text-xs leading-relaxed text-foreground print:block"
+      >
+        <strong>Wichtig:</strong> Diese Analyse ist eine automatisierte Vorabprüfung
+        gesundheitsbezogener Werbeaussagen nach VO (EG) 1924/2006 und ist
+        <strong> kein Ersatz für Rechtsberatung</strong>. ClaimGuard haftet nicht
+        für geschäftliche Entscheidungen auf Basis dieser Auswertung.
+      </div>
+
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-accent/50 bg-accent/30 px-3 py-2 text-xs">
         <Info className="h-3.5 w-3.5 shrink-0 text-accent-foreground" aria-hidden />
         <span className="text-foreground/85">
@@ -656,38 +940,128 @@ function DoneState({
         </span>
       </div>
 
-      {totalApplicable > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs">
-          <span className="text-foreground/85">
-            <strong className="font-semibold tabular-nums">
-              {appliedIds.size} / {totalApplicable}
-            </strong>{" "}
-            Reformulierungen übernommen
-          </span>
-          <div className="flex items-center gap-1.5">
-            {appliedIds.size > 0 && (
-              <button
-                type="button"
-                onClick={onRevertAll}
-                className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
-              >
-                <RotateCcw className="h-3 w-3" aria-hidden />
-                Alle zurücksetzen
-              </button>
-            )}
-            {!allApplied && (
-              <button
-                type="button"
-                onClick={onApplyAll}
-                className="inline-flex items-center gap-1 rounded bg-primary px-2.5 py-1 text-[11px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
-              >
-                <CheckCheck className="h-3 w-3" aria-hidden />
-                Alle übernehmen
-              </button>
-            )}
+      {appliedIds.size > 0 && !polishedText && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-status-allowed/30 bg-status-allowed-bg/30 px-3 py-2 text-xs">
+            <span className="text-foreground/85">
+              Reformulierungen sind übernommen — eine Schluss-Korrektur glättet
+              jetzt Grammatik und Übergänge, ohne den rechtlichen Inhalt
+              anzufassen.
+            </span>
+            <button
+              type="button"
+              onClick={onPolish}
+              disabled={isPolishing}
+              className="inline-flex items-center gap-1 rounded bg-status-allowed/90 px-2.5 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-status-allowed disabled:opacity-60"
+            >
+              {isPolishing ? (
+                <>
+                  <Sparkles className="h-3 w-3 animate-pulse" aria-hidden />
+                  Schluss-Korrektur läuft …
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-3 w-3" aria-hidden />
+                  Final glätten
+                </>
+              )}
+            </button>
           </div>
+          {polishError && (
+            <div className="flex items-start gap-2 rounded-md border border-status-forbidden/30 bg-status-forbidden-bg/40 px-3 py-2 text-xs text-status-forbidden">
+              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span>{polishError}</span>
+            </div>
+          )}
         </div>
       )}
+
+      {(() => {
+        const problematic = result.evaluated_claims.filter(
+          (c) => c.status !== "allowed",
+        );
+        if (problematic.length === 0) return null;
+        const missingRewrites = problematic.filter(
+          (c) => !c.rewrite_suggestion,
+        ).length;
+        return (
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs">
+              <span className="text-foreground/85">
+                {totalApplicable > 0 ? (
+                  <>
+                    <strong className="font-semibold tabular-nums">
+                      {appliedIds.size} / {totalApplicable}
+                    </strong>{" "}
+                    Reformulierungen übernommen
+                  </>
+                ) : (
+                  <>
+                    {problematic.length}{" "}
+                    {problematic.length === 1 ? "Claim braucht" : "Claims brauchen"}{" "}
+                    Reformulierung — Claude kann sie automatisch erstellen.
+                  </>
+                )}
+              </span>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {appliedIds.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={onRevertAll}
+                    disabled={isRewritingAll}
+                    className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                  >
+                    <RotateCcw className="h-3 w-3" aria-hidden />
+                    Alle zurücksetzen
+                  </button>
+                )}
+                {totalApplicable > 0 && !allApplied && (
+                  <button
+                    type="button"
+                    onClick={onApplyAll}
+                    disabled={isRewritingAll}
+                    className="inline-flex items-center gap-1 rounded bg-primary/80 px-2.5 py-1 text-[11px] font-semibold text-primary-foreground transition-colors hover:bg-primary disabled:opacity-50"
+                  >
+                    <CheckCheck className="h-3 w-3" aria-hidden />
+                    Vorschläge übernehmen
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={onRewriteAll}
+                  disabled={isRewritingAll}
+                  title={
+                    missingRewrites > 0
+                      ? `Claude schreibt ${missingRewrites} fehlende Reformulierungen und übernimmt alle.`
+                      : "Alle Reformulierungen übernehmen."
+                  }
+                  className="inline-flex items-center gap-1 rounded bg-primary px-2.5 py-1 text-[11px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
+                >
+                  {isRewritingAll ? (
+                    <>
+                      <Sparkles className="h-3 w-3 animate-pulse" aria-hidden />
+                      Claude schreibt …
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="h-3 w-3" aria-hidden />
+                      {missingRewrites > 0
+                        ? "Claude alles umschreiben & übernehmen"
+                        : "Alle automatisch übernehmen"}
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+            {rewriteAllError && (
+              <div className="flex items-start gap-2 rounded-md border border-status-forbidden/30 bg-status-forbidden-bg/40 px-3 py-2 text-xs text-status-forbidden">
+                <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                <span>{rewriteAllError}</span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {result.evaluated_claims.map((claim, i) => (
         <EvaluatedClaimCard

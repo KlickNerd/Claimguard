@@ -3,6 +3,8 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.retrieval import RetrievalHit
+
 ClaimType = Literal[
     "nutrient_based",
     "health_based",
@@ -56,12 +58,26 @@ RiskLevel = Literal["low", "medium", "high"]
 class LegalHint(BaseModel):
     """A tentative legal reference suggested by the LLM without a curated KB.
 
-    NOT a verified citation - the frontend surfaces this behind an explicit
-    "KI-Schätzung"-disclaimer until PROJ-9 retrieval is in place.
+    When ``verified`` is True the hint was validated against the curated
+    knowledge base via PROJ-9 retrieval; chunk_id and url then point at the
+    actual KB entry. When False, the hint is a Sonnet-only suggestion - the
+    frontend keeps the "KI-Schätzung"-disclaimer for those.
     """
 
     reference: str = Field(description="e.g. 'Art. 7 LMIV' or 'BGH, I ZR 252/16'")
     rationale: str = Field(description="Why this reference applies, 1 sentence")
+    verified: bool = Field(
+        default=False,
+        description="True when the reference matches a chunk in the curated KB.",
+    )
+    chunk_id: str | None = Field(
+        default=None,
+        description="Stable id of the KB chunk this hint cites, when verified.",
+    )
+    url: str | None = Field(
+        default=None,
+        description="Deep link to the source (Eur-Lex or EU Register), when verified.",
+    )
 
 
 class EvaluatedClaim(DetectedClaim):
@@ -78,6 +94,10 @@ class EvaluatedClaim(DetectedClaim):
     reasoning: str
     rewrite_suggestion: str | None = None
     legal_hints: list[LegalHint] = Field(default_factory=list)
+    evidence: list[RetrievalHit] = Field(
+        default_factory=list,
+        description="Top-K curated KB hits attached by PROJ-9 retrieval.",
+    )
     evaluation_model: str
     evaluation_prompt_version: str
 

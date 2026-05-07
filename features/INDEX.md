@@ -19,23 +19,24 @@
 | PROJ-3 | Stripe-Integration (Subscription) | Planned | [PROJ-3](PROJ-3-stripe-subscription.md) | 2026-04-23 |
 | PROJ-4 | EU-Claim-Register-Integration | In Progress | [PROJ-4](PROJ-4-eu-claim-register.md) | 2026-04-23 |
 | PROJ-5 | HCVO-Verordnungstext-Integration | In Progress | [PROJ-5](PROJ-5-hcvo-regulation.md) | 2026-04-23 |
-| PROJ-6 | Urteilsdatenbank (30 Fälle) | Planned | [PROJ-6](PROJ-6-case-law-database.md) | 2026-04-23 |
+| PROJ-6 | Urteilsdatenbank (30 Fälle) | In Progress | [PROJ-6](PROJ-6-case-law-database.md) | 2026-04-23 |
 | PROJ-7 | Prompt-Management | In Progress | [PROJ-7](PROJ-7-prompt-management.md) | 2026-04-23 |
 | PROJ-8 | Claim-Detection | In Progress | [PROJ-8](PROJ-8-claim-detection.md) | 2026-04-23 |
-| PROJ-9 | Hybrid Retrieval | Architected | [PROJ-9](PROJ-9-hybrid-retrieval.md) | 2026-04-23 |
-| PROJ-10 | Claim-Evaluation | Architected | [PROJ-10](PROJ-10-claim-evaluation.md) | 2026-04-23 |
+| PROJ-9 | Hybrid Retrieval | In Progress | [PROJ-9](PROJ-9-hybrid-retrieval.md) | 2026-04-23 |
+| PROJ-10 | Claim-Evaluation | In Progress | [PROJ-10](PROJ-10-claim-evaluation.md) | 2026-04-23 |
 | PROJ-11 | Text-Input-Analyse | In Progress | [PROJ-11](PROJ-11-text-input-analysis.md) | 2026-04-23 |
-| PROJ-12 | PDF-Upload | Planned | [PROJ-12](PROJ-12-pdf-upload.md) | 2026-04-23 |
-| PROJ-13 | URL-Analyse (Text-only) | Planned | [PROJ-13](PROJ-13-url-analysis.md) | 2026-04-23 |
+| PROJ-12 | PDF-Upload | In Progress | [PROJ-12](PROJ-12-pdf-upload.md) | 2026-04-23 |
+| PROJ-13 | URL-Analyse (Text-only) | In Progress | [PROJ-13](PROJ-13-url-analysis.md) | 2026-04-23 |
 | PROJ-14 | Analyse-Report-Darstellung | In Progress | [PROJ-14](PROJ-14-report-visualization.md) | 2026-04-23 |
-| PROJ-15 | PDF-Export des Reports | Planned | [PROJ-15](PROJ-15-pdf-export.md) | 2026-04-23 |
+| PROJ-15 | PDF-Export des Reports | In Progress | [PROJ-15](PROJ-15-pdf-export.md) | 2026-04-23 |
 | PROJ-16 | Dashboard | In Progress | [PROJ-16](PROJ-16-dashboard.md) | 2026-04-23 |
 | PROJ-17 | DSGVO-Konformität | Planned | [PROJ-17](PROJ-17-dsgvo-compliance.md) | 2026-04-23 |
 | PROJ-18 | Marketing Landing Page + Beta-Waitlist | In Progress | [PROJ-18](PROJ-18-marketing-landing.md) | 2026-04-24 |
+| PROJ-19 | Erweiterte Rechtsquellen (LFGB/LMIV/HWG/UWG) | In Progress | [PROJ-19](PROJ-19-extended-legal-sources.md) | 2026-05-01 |
 
 <!-- Add features above this line -->
 
-## Next Available ID: PROJ-19
+## Next Available ID: PROJ-20
 
 ## Recommended Build Order
 

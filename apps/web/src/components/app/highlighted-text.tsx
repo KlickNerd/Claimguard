@@ -1,3 +1,7 @@
+import type { ComponentProps } from "react";
+import ReactMarkdown from "react-markdown";
+import rehypeRaw from "rehype-raw";
+import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
 import type { DetectedClaim, EvaluatedClaim, EvaluationStatus } from "@/lib/api-client";
 
@@ -11,55 +15,68 @@ const STATUS_HIGHLIGHT: Record<EvaluationStatus, string> = {
     "bg-status-unclear-bg/80 text-status-unclear decoration-status-unclear/40",
 };
 
+const APPLIED_HIGHLIGHT =
+  "bg-status-allowed-bg text-status-allowed decoration-status-allowed/60 italic";
+
 const NEUTRAL_HIGHLIGHT =
   "bg-accent text-accent-foreground decoration-accent-foreground/30";
 
 type HighlightClaim = DetectedClaim | EvaluatedClaim;
 
-type Segment =
-  | { kind: "text"; value: string }
-  | {
-      kind: "claim";
-      value: string;
-      claim: HighlightClaim;
-      status: EvaluationStatus | null;
-      index: number;
-    };
-
-function buildSegments(
+/** Splice the claim spans into the source text as inline ``<mark>`` tags so
+ *  react-markdown + rehype-raw can render them through any block-level
+ *  element (headings, bullets, paragraphs, tables) that surrounds them.
+ *
+ *  Position indices stay relative to the *original* markdown source - we
+ *  only swap the visible text of applied claims, never the indices for
+ *  subsequent ones, so headings/bullets stay anchored to the right
+ *  characters even after rewrites are applied. */
+function annotateMarkdown(
   text: string,
   claims: HighlightClaim[],
   evaluatedById: Map<string, EvaluatedClaim>,
-): Segment[] {
-  // Sort by position, drop overlaps (keep the earlier one).
+  appliedIds: Set<string>,
+  activeClaimId: string | null,
+): string {
   const sorted = [...claims].sort(
     (a, b) => a.position_start - b.position_start,
   );
-  const segments: Segment[] = [];
+  let out = "";
   let cursor = 0;
   let visualIndex = 0;
   for (const claim of sorted) {
     if (claim.position_start < cursor) continue;
     if (claim.position_start > cursor) {
-      segments.push({
-        kind: "text",
-        value: text.slice(cursor, claim.position_start),
-      });
+      out += text.slice(cursor, claim.position_start);
     }
+    visualIndex += 1;
     const evaluated = evaluatedById.get(claim.id);
-    segments.push({
-      kind: "claim",
-      value: text.slice(claim.position_start, claim.position_end),
-      claim: evaluated ?? claim,
-      status: evaluated?.status ?? null,
-      index: ++visualIndex,
-    });
+    const applied =
+      appliedIds.has(claim.id) && Boolean(evaluated?.rewrite_suggestion);
+    const innerRaw = applied && evaluated?.rewrite_suggestion
+      ? evaluated.rewrite_suggestion
+      : text.slice(claim.position_start, claim.position_end);
+    // ``<mark>`` keeps inline semantics across markdown blocks. Replace
+    // newlines inside the claim with a literal break so the text stays on
+    // the same paragraph after parsing - long claims that straddle a
+    // markdown boundary would otherwise tear the document apart.
+    const inner = escapeHtml(innerRaw).replace(/\n/g, " ");
+    out += `<mark data-claim-id="${claim.id}" data-status="${
+      evaluated?.status ?? ""
+    }" data-applied="${applied ? "1" : "0"}" data-active="${
+      activeClaimId === claim.id ? "1" : "0"
+    }" data-index="${visualIndex}">${inner}</mark>`;
     cursor = claim.position_end;
   }
-  if (cursor < text.length) {
-    segments.push({ kind: "text", value: text.slice(cursor) });
-  }
-  return segments;
+  if (cursor < text.length) out += text.slice(cursor);
+  return out;
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 type Props = {
@@ -68,6 +85,7 @@ type Props = {
   evaluatedClaims: EvaluatedClaim[];
   onClaimClick?: (claimId: string) => void;
   activeClaimId?: string | null;
+  appliedIds?: Set<string>;
 };
 
 export function HighlightedText({
@@ -76,43 +94,103 @@ export function HighlightedText({
   evaluatedClaims,
   onClaimClick,
   activeClaimId,
+  appliedIds,
 }: Props) {
   const evaluatedById = new Map(evaluatedClaims.map((c) => [c.id, c]));
-  // Prefer the evaluated list when available so highlights pick up status,
-  // fall back to the raw detection list otherwise (e.g. evaluation skipped).
   const sourceList: HighlightClaim[] =
     evaluatedClaims.length > 0 ? evaluatedClaims : detectedClaims;
 
-  const segments = buildSegments(text, sourceList, evaluatedById);
+  const annotated = annotateMarkdown(
+    text,
+    sourceList,
+    evaluatedById,
+    appliedIds ?? new Set<string>(),
+    activeClaimId ?? null,
+  );
 
   return (
-    <div className="overflow-y-auto px-5 py-5">
-      <p className="whitespace-pre-wrap font-serif text-[15px] leading-[1.85] text-foreground">
-        {segments.map((s, i) =>
-          s.kind === "text" ? (
-            <span key={i}>{s.value}</span>
-          ) : (
-            <button
-              key={i}
-              type="button"
-              data-claim-id={s.claim.id}
-              onClick={() => onClaimClick?.(s.claim.id)}
-              className={cn(
-                "rounded px-1 py-0.5 underline decoration-2 underline-offset-4 transition-shadow",
-                "cursor-pointer ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                s.status
-                  ? STATUS_HIGHLIGHT[s.status]
-                  : NEUTRAL_HIGHLIGHT,
-                activeClaimId === s.claim.id &&
-                  "ring-2 ring-primary ring-offset-1",
-              )}
-              aria-label={`Claim ${s.index}: ${s.claim.claim_text}`}
-            >
-              {s.value}
-            </button>
+    <div className="prose prose-sm max-w-none overflow-y-auto px-5 py-5 font-serif text-[15px] leading-[1.85] text-foreground prose-headings:font-serif prose-headings:tracking-tight prose-headings:text-foreground prose-strong:text-foreground prose-a:text-primary prose-li:my-1">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeRaw]}
+        components={{
+          mark: (props) => (
+            <ClaimMark
+              {...(props as ComponentProps<"mark"> & {
+                "data-claim-id"?: string;
+                "data-status"?: string;
+                "data-applied"?: string;
+                "data-active"?: string;
+                "data-index"?: string;
+              })}
+              onClaimClick={onClaimClick}
+            />
           ),
-        )}
-      </p>
+        }}
+      >
+        {annotated}
+      </ReactMarkdown>
     </div>
+  );
+}
+
+function ClaimMark({
+  onClaimClick,
+  children,
+  ...attrs
+}: ComponentProps<"mark"> & {
+  "data-claim-id"?: string;
+  "data-status"?: string;
+  "data-applied"?: string;
+  "data-active"?: string;
+  "data-index"?: string;
+  onClaimClick?: (claimId: string) => void;
+}) {
+  const claimId = attrs["data-claim-id"] ?? "";
+  const status = (attrs["data-status"] ?? "") as EvaluationStatus | "";
+  const applied = attrs["data-applied"] === "1";
+  const active = attrs["data-active"] === "1";
+  const index = attrs["data-index"] ?? "";
+
+  // Strip our private data-* attrs from the spread so React doesn't
+  // forward them as unknown DOM props during type narrowing.
+  const {
+    "data-claim-id": _id,
+    "data-status": _status,
+    "data-applied": _applied,
+    "data-active": _active,
+    "data-index": _index,
+    ...rest
+  } = attrs;
+  void _id;
+  void _status;
+  void _applied;
+  void _active;
+  void _index;
+
+  return (
+    <button
+      {...(rest as ComponentProps<"button">)}
+      type="button"
+      data-claim-id={claimId}
+      onClick={() => claimId && onClaimClick?.(claimId)}
+      className={cn(
+        "rounded px-1 py-0.5 underline decoration-2 underline-offset-4 transition-shadow",
+        "cursor-pointer ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        applied
+          ? APPLIED_HIGHLIGHT
+          : status
+            ? STATUS_HIGHLIGHT[status as EvaluationStatus]
+            : NEUTRAL_HIGHLIGHT,
+        active && "ring-2 ring-primary ring-offset-1",
+      )}
+      aria-label={
+        applied
+          ? `Claim ${index}: Reformulierung übernommen`
+          : `Claim ${index}`
+      }
+    >
+      {children}
+    </button>
   );
 }

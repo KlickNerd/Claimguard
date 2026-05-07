@@ -1,8 +1,8 @@
 # PROJ-9: Hybrid Retrieval
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-04-23
-**Last Updated:** 2026-04-23
+**Last Updated:** 2026-05-02
 **Backlog-Referenz:** F-011
 
 ## Dependencies
@@ -100,17 +100,15 @@ PROJ-9 ist **Stufe 2 der Analyse-Pipeline**. Es bekommt eine Liste `DetectedClai
 
 ```
 apps/api/app/
-├── pipelines/
-│   └── retrieval.py              # Orchestrator
 ├── services/
-│   ├── embedding_client.py       # jina-v3 local HTTP (ADR-0003)
-│   ├── qdrant_client.py          # Qdrant-Wrapper, async
-│   ├── postgres_fts.py           # Postgres Full-Text-Search
-│   └── fusion.py                 # RRF-Algorithmus
+│   ├── embedding_service.py      # E5 in-process via sentence-transformers (ADR-0006)
+│   └── retrieval_service.py      # Qdrant-Suche + RRF-Fusion
 ├── schemas/
 │   └── retrieval.py              # RetrievalHit, RetrievalResult
 └── cache/
-    └── embedding_cache.py        # Redis-Cache (ADR-0005)
+    └── embedding_cache.py        # Redis-Cache (ADR-0005, V1.1)
+scripts/
+└── index_knowledge_base.py       # CLI: KB → Qdrant indexieren
 ```
 
 Drei Qdrant-Collections werden parallel durchsucht: `eu_claims`, `regulation_chunks`, `case_law` (Union-Suche, gleicher Score-Raum).
@@ -134,7 +132,7 @@ Drei Qdrant-Collections werden parallel durchsucht: `eu_claims`, `regulation_chu
 
 | Entscheidung | Wahl | Warum |
 |---|---|---|
-| Embedding-Modell | jina-embeddings-v3 self-hosted | ADR-0003; EU, DSGVO, niedrige Latenz |
+| Embedding-Modell | `multilingual-e5-base` in-process | ADR-0006 (supersedes ADR-0003); Apache-2.0, kein extra Container, kein `trust_remote_code` |
 | Fusion | Reciprocal Rank Fusion (k=60) | Literatur-Standard (Cormack et al.), parameterarm, robust gegen Score-Skew zwischen Vektor- und Keyword-Suche |
 | Per-Source-Gewichtung | Gleich gewichtet (V1.0) | MVP: Daten fehlen für informed-Tuning. V1.1: Urteile ggf. boosten basierend auf Eval |
 | Parallelisierung | `asyncio.gather(qdrant, postgres)` | Beide I/O-bound, Latenz-Gewinn ~ 40 % gegenüber sequentiell |
@@ -147,16 +145,17 @@ Drei Qdrant-Collections werden parallel durchsucht: `eu_claims`, `regulation_chu
 
 ### Dependencies (neu)
 
-- `qdrant-client` (mit async-Extra)
-- `asyncpg` (schneller Postgres-Driver)
-- `httpx` (für jina-v3 lokalen HTTP-Call)
-- `redis` (asyncio) für Embedding-Cache (aus ADR-0005)
+- `qdrant-client` (sync für MVP, async-Extra erst in V1.1)
+- `sentence-transformers` (lädt `multilingual-e5-base` lazy in-process)
+- `asyncpg` (Postgres-Driver, sobald FTS-Pfad live geht — V1.1)
+- `redis` (asyncio) für Embedding-Cache (aus ADR-0005, V1.1)
 
 ### Verknüpfte ADRs
 - [ADR-0002](../docs/adr/0002-async-worker-arq.md) Redis verfügbar → Embedding-Cache möglich
-- [ADR-0003](../docs/adr/0003-embedding-model.md) jina-v3 self-hosted
+- [ADR-0003](../docs/adr/0003-embedding-model.md) jina-v3 self-hosted *(superseded)*
 - [ADR-0004](../docs/adr/0004-reranker-v11.md) kein Reranker im MVP
 - [ADR-0005](../docs/adr/0005-caching-strategy.md) Embedding-Cache aktiv
+- [ADR-0006](../docs/adr/0006-embedding-model-e5.md) `multilingual-e5-base` in-process
 
 ### Risiken & Mitigation
 
@@ -172,6 +171,78 @@ Drei Qdrant-Collections werden parallel durchsucht: `eu_claims`, `regulation_chu
 - Kein HyDE (hypothetical document embeddings) — zu früh
 - Keine Query-Rewriting-LLM-Calls — Latenz/Kosten
 - Kein semantisches Chunking zur Query-Zeit — Chunks sind bereits beim Indexieren optimiert (PROJ-4/5/6)
+
+## Implementation Notes (2026-05-01)
+
+**Was umgesetzt ist (MVP-Stand):**
+- `embedding_service.py` lädt `multilingual-e5-base` lazy als In-process-Singleton (siehe ADR-0006).
+- `retrieval_service.py` bedient Qdrant-Vektorsuche über die Collections `eu_claims` (221 Einträge aus VO 432/2012) und `regulation` (179 HCVO-Chunks). RRF-Fusion über die zwei Rankings, Score-Threshold 0.45, Default Top-K=8.
+- `scripts/index_knowledge_base.py` als idempotenter CLI-Indexer aus den PROJ-4/5-JSONs.
+- `DetectionOnlyPipeline` hängt nach der Sonnet-Evaluation pro `EvaluatedClaim` Top-5-Evidence-Hits an. Frontend bekommt `evaluated_claims[*].evidence` mit `chunk_id`, `reference`, `snippet`, `url`, `metadata`.
+- `LegalHint`-Verifizierung als heuristisches Reference-Matching (Substring nach Normalisierung); markiert verifizierte Hints mit `verified=True` + `chunk_id`/`url`.
+- Graceful Degradation: Qdrant-Ausfall führt zu leerer Evidence + UI-Warning, blockiert Eval nicht.
+
+**Smoke-Test 2026-05-01 (4 Claims, 19s end-to-end):**
+- "Magnesium trägt zu einer normalen Muskelfunktion bei" → exakter Treffer im EU-Register (Score 1.00), Verdict `allowed` ✓
+- "Vitamin D stärkt das Immunsystem" → autorisierter Vitamin-D-Immunsystem-Eintrag als Top-Evidence ✓
+- "schützt vor Erkältungen" → Verdict `forbidden` mit Art. 12 Abs. 1 HCVO als Evidence ✓
+- "Hilft beim Abnehmen / macht schlank über Nacht" → Verdict `forbidden` mit Art. 12 Abs. 3 b ("Angaben über Dauer und Ausmaß der Gewichtsabnahme") ✓
+- Retrieval-Latenz nach Modell-Warmup: 50–170 ms pro Claim (Acceptance: ≤ 500 ms ✓).
+
+**Bewusst nicht im MVP, aber als Folgetasks offen:**
+- Async `qdrant-client` (aktuell sync hinter `asyncio.to_thread`).
+- LegalHint-Substring-Verifizierung verbessern (im Full-Mode entfällt die
+  Heuristik ohnehin durch chunk_id-Matching im Evaluator — siehe PROJ-10).
+- Eval-Set mit ≥ 50 annotierten Claims für das Recall@8-Gate aus ADR-0006.
+- pytest-Coverage für `RetrievalService` (RRF-Fusion, Soft-Fail, Query-Erweiterung).
+
+## Update 2026-05-02 — Hybrid-Retrieval komplett (FTS + case_law)
+
+**Was zusätzlich umgesetzt ist:**
+- `case_law`-Collection (PROJ-6) ist nun aktiv: zwölf paraphrasierte
+  BGH/OLG/EuGH-Landmark-Urteile werden parallel zu `eu_claims` und
+  `regulation` durchsucht.
+- **Postgres-FTS-Pfad** als zweite Such-Quelle:
+  - Postgres 16-Container in [`docker-compose.yml`](../docker-compose.yml).
+  - [`postgres_fts.py`](../apps/api/app/services/postgres_fts.py) verwaltet
+    eine `kb_chunks`-Tabelle mit STORED `tsvector` (gewichtete Kombination
+    aus `reference` und `snippet`, `to_tsvector('german', …)`), GIN-Index.
+  - Indexer schreibt jeden Chunk parallel zum Qdrant-Upsert nach Postgres
+    (idempotent per Source-Type-Reset).
+  - Query-Tokenisierung in Python + OR-Verbund über `plainto_tsquery`-
+    Tokens, sodass der German-Snowball auch Derivationen erwischt
+    (`Empfehlung` ↔ `empfohlen` greifen über getrennte Treffer).
+  - `retrieval_service` führt Vektor- und FTS-Suche parallel aus,
+    fusioniert via RRF (`k=60`). Postgres-Outage degradiert sauber zu
+    Vektor-only.
+- Acceptance Criterion „parallele Suche in Qdrant + Postgres mit
+  `to_tsvector('german', …)`" ist **erfüllt**.
+
+**Smoke-Test 2026-05-02 (HWG-Trigger):**
+- „Vitalkapseln vom Apotheker empfohlen" → **HWG § 11 Abs. 1 als Top-1-
+  Evidence** + OLG Köln 6 U 84/14 (Arzt-Empfehlung) als case_law ✓
+- „Mit wissenschaftlichem Gutachten beworben" → HWG § 11 Abs. 1
+  Top-1 ✓
+- „Garantiert ohne Nebenwirkungen" → Art. 5 Abs. 4 HCVO + BGH I ZR 36/11
+  ✓
+- Retrieval-Latenz mit FTS in der Pipeline: ~ 100–200 ms zusätzlich für
+  den Postgres-Roundtrip (lokal); bleibt im 500-ms-Budget.
+
+**Damit erfüllt:**
+- ✅ parallele Suche in Qdrant (Vektor) + Postgres (Keyword) mit
+  `to_tsvector('german', …)`
+- ✅ Suchraum: Union aus `eu_claims`, `regulation_chunks`, `case_law`
+- ✅ Fusion via RRF (`k=60`)
+- ✅ Top-K konfigurierbar, Default 8
+- ✅ Score-Threshold 0.45 für Vektor-Pfad, FTS hat eigenen ts_rank
+- ✅ Query-Erweiterung Claim + Nutrient + Substance
+- ✅ Keyword-Suche mit `german`-Analyzer (Snowball-Stemmer)
+- ✅ Deduplication via chunk_id im RRF
+- ✅ Graceful Degradation bei Qdrant- oder Postgres-Outage
+
+**Weiter offen:**
+- Recall@8-Gate-Messung mit Eval-Set (ADR-0006)
+- pytest-Coverage `RetrievalService`/`postgres_fts`
 
 ## QA Test Results
 _To be added by /qa_

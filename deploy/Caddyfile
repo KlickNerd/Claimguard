@@ -1,0 +1,53 @@
+# ClaimGuard Caddy configuration.
+#
+# One domain, two routes:
+#   * /api/*   -> FastAPI backend (Sonnet pipeline, retrieval, etc.)
+#   * /*       -> Next.js frontend
+#
+# Caddy automatically provisions a Let's-Encrypt cert for the domain
+# at startup and renews it; no manual ACME / certbot work required.
+#
+# DOMAIN is templated from the docker-compose env so we don't bake the
+# value into the repo.
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# Reasonable security headers for an inhouse tool. Tighten if the
+	# tool ever leaves the org.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Frontend bundles ship an inline service-worker manifest etc.;
+		# the strict CSP we'd want here would need a dedicated review.
+		# For now we keep CSP off and revisit during the public launch
+		# (PROJ-17).
+	}
+
+	# Backend routes. Caddy keeps the trailing path so /api/analyses
+	# becomes /api/analyses on the upstream.
+	@api path /api/*
+	handle @api {
+		reverse_proxy api:8000 {
+			# Long-running LLM calls; default 60 s timeouts choke our
+			# evaluation + smart-apply requests on big pillar pages.
+			transport http {
+				read_timeout 300s
+				write_timeout 300s
+			}
+		}
+	}
+
+	# Everything else hits the Next.js standalone server.
+	handle {
+		reverse_proxy web:3000
+	}
+
+	log {
+		output stdout
+		format console
+		level INFO
+	}
+}

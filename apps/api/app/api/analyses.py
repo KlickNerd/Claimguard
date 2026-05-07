@@ -5,6 +5,7 @@ from app.schemas.analysis import AnalysisError, AnalysisRequest, AnalysisRespons
 from app.services.anthropic_client import AnthropicServiceError
 from app.services.claim_detector import ClaimDetector
 from app.services.claim_evaluator import ClaimEvaluator
+from app.services.retrieval_service import get_retrieval_service
 
 router = APIRouter(prefix="/api/analyses", tags=["analyses"])
 
@@ -13,6 +14,7 @@ def get_pipeline() -> DetectionOnlyPipeline:
     return DetectionOnlyPipeline(
         detector=ClaimDetector(),
         evaluator=ClaimEvaluator(),
+        retriever=get_retrieval_service(),
     )
 
 

@@ -1,9 +1,53 @@
 # PROJ-6: Urteilsdatenbank (30 Fälle)
 
-## Status: Planned
+## Status: In Progress
 **Created:** 2026-04-23
-**Last Updated:** 2026-04-23
+**Last Updated:** 2026-05-01
 **Backlog-Referenz:** F-022
+
+## Implementation Notes (2026-05-01)
+
+**Was umgesetzt ist (MVP-Stand):**
+- Pydantic-Schema [`schemas/case_law.py`](../apps/api/app/schemas/case_law.py)
+  mit `CaseLawEntry` (id, court, case_number, decision_date, title, claim_type,
+  decision, summary, legal_basis, tags, source_url) und Wrapper `CaseLawDataset`.
+- JSON-Seed-Datei [`data/case_law.json`](../apps/api/data/case_law.json) mit
+  **12 Landmark-Entscheidungen** als redaktionelle Paraphrasen — keine
+  Volltext-Übernahme aus juris/beck-online (Urheberrecht). Inhaltsspektrum:
+  Detox-Slogans (BGH/OLG Düsseldorf), Monsterbacke I+II, Vitalpilze,
+  Bach-Blüten, Innova Vital (EuGH), Präbiotik/Probiotik, Immunsystem-
+  Werbung (OLG Frankfurt), Schlankheits-Versprechen (OLG Hamburg),
+  Arzt-Empfehlung (OLG Köln), Markenname-Therapie.
+- [`scripts/index_knowledge_base.py`](../apps/api/scripts/index_knowledge_base.py)
+  erweitert: dritte Qdrant-Collection `case_law` (12 Punkte) wird neben
+  `eu_claims` und `regulation` indexiert. Embedding-Input = Title + Summary
+  + Tags, sodass thematische Treffer auch ohne wörtliche Aktenzeichen-
+  Übereinstimmung greifen.
+- [`retrieval_service.py`](../apps/api/app/services/retrieval_service.py)
+  durchsucht `case_law` jetzt parallel mit den anderen beiden Quellen via
+  RRF.
+- Smoke-Test 2026-05-01 mit Detox-/Reinigung-/Immunsystem-/Milch-Claims:
+  Alle vier Claims bekommen verifizierte case_law-Hits, z. B.
+  `bgh-i-zr-167-13-monsterbacke` für „So wichtig wie das tägliche Glas Milch"
+  und `olg-frankfurt-6-u-184-19-immunabwehr` für „stärkt das Immunsystem".
+  Opus zitiert ausschließlich aus dem Evidence-Pool — keine halluzinierten
+  Aktenzeichen mehr.
+
+**Bewusst nicht im MVP, aber als Folgetasks offen:**
+- **Nur 12 Urteile statt 30** (Spec-Acceptance). Die 12 sind aber alle
+  Landmark-Cases mit hoher praktischer Bedeutung. Jeder weitere Eintrag
+  braucht eine handgeschriebene Paraphrase + verifiziertes Aktenzeichen,
+  weshalb der „30 Fälle"-Anspruch ein redaktionelles, kein Code-Thema ist.
+- **Kein Admin-CRUD-UI** (Spec-Acceptance). MVP pflegt das JSON direkt im
+  Repo — sobald Dominik regelmäßig Urteile ergänzen will, kommt eine
+  separate Route `/admin/cases` mit Supabase-RLS (hängt an PROJ-1 Auth).
+- **Kein Audit-Log / Soft-Delete / overruled-Filter.** Die 12 Urteile sind
+  alle in Kraft; Filterung kommt erst, wenn die Liste wächst.
+- **Kein Postgres-FTS-Index** auf case_law (war im Spec für die hybrid-
+  Retrieval-Variante in PROJ-9 vorgesehen, dort aktuell auch nicht).
+- **Verifikation der Aktenzeichen.** Die Seed-Paraphrasen stammen aus
+  belastbarem Trainingswissen, aber jeder Eintrag muss vor produktiver
+  Nutzung gegen die `source_url` gegengeprüft werden.
 
 ## Dependencies
 - None (Wissensbasis-Fundament)

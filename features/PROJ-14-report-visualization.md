@@ -2,8 +2,9 @@
 
 ## Status: In Progress
 **Implementierungsstand:** Frontend-Mock auf `/app/history/[id]` fertig — Zwei-Spalten-Layout mit Inline-Markierungen (`MarkedText`), Status-Tiles, ClaimCards mit Rechtsgrundlage und Reformulierung, „Auf einen Blick"-Summary, Disclaimer-Footer. Echte Daten kommen nach PROJ-10-Backend.
+**Update 2026-05-01:** `EvaluatedClaimCard` zeigt jetzt eine eigene **Belege aus der Wissensbasis**-Sektion, sobald PROJ-9-Retrieval Hits liefert (grün umrandet, mit Icon je Quelltyp, Score, Snippet, Eur-Lex-Deep-Link). LegalHints werden zusätzlich pro Eintrag als „verifiziert" oder „KI-Schätzung" gelabelt. Frontend-Typen `RetrievalHit`/`evidence`/`LegalHint.verified` in [api-client.ts](../apps/web/src/lib/api-client.ts).
 **Created:** 2026-04-23
-**Last Updated:** 2026-04-23
+**Last Updated:** 2026-05-01
 **Backlog-Referenz:** F-013
 
 ## Dependencies
