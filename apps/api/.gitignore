@@ -16,5 +16,10 @@ htmlcov/
 dist/
 build/
 uv.lock.bak
-data/*.pdf
-data/*.json
+
+# Knowledge-base source + parsed JSONs ship with the repo so the api
+# image builds with a complete /app/data tree and the indexer has
+# something to upsert. Three of the JSONs are hand-curated (no source
+# script exists), the others are reproducible via scripts/import_*.py.
+# Add explicit ignores here only for files that are genuinely local
+# (e.g. eval dumps, cache).

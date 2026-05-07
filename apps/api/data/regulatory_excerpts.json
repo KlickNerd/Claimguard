@@ -1,0 +1,96 @@
+{
+  "version": "2026-05-01",
+  "note": "Redactional paraphrases of LMIV / LFGB / HWG / UWG provisions relevant to health-claim advertising. We do not store verbatim statutory text - the source_url points to the official German legal information service (gesetze-im-internet.de) or Eur-Lex for canonical wording. Verify against source before relying commercially.",
+  "excerpts": [
+    {
+      "chunk_id": "lmiv-art7-1",
+      "regulation_id": "LMIV",
+      "article": "7",
+      "paragraph": "1",
+      "title": "Verbot irreführender Lebensmittelinformationen",
+      "snippet": "Informationen über Lebensmittel dürfen nicht irreführend sein, insbesondere a) hinsichtlich Art, Identität, Zusammensetzung, Menge, Haltbarkeit, Herkunft oder Herstellung, b) durch Zuschreibung von Wirkungen, die das Lebensmittel nicht besitzt, c) durch den Eindruck besonderer Eigenschaften, die alle vergleichbaren Lebensmittel besitzen, d) durch Andeutungen besonderer Eigenschaften, die nicht vorhanden sind.",
+      "source_url": "https://eur-lex.europa.eu/legal-content/DE/TXT/?uri=CELEX:32011R1169",
+      "tags": ["irrefuehrung", "lebensmittelinformation"]
+    },
+    {
+      "chunk_id": "lmiv-art7-3",
+      "regulation_id": "LMIV",
+      "article": "7",
+      "paragraph": "3",
+      "title": "Verbot krankheitsbezogener Aussagen für Lebensmittel",
+      "snippet": "Vorbehaltlich abweichender unionsrechtlicher Vorschriften für natürliche Mineralwässer und für Lebensmittel, die für eine besondere Ernährung bestimmt sind, dürfen Informationen über ein Lebensmittel diesem keine Eigenschaften der Vorbeugung, Behandlung oder Heilung einer menschlichen Krankheit zuschreiben oder den Eindruck dieser Eigenschaften entstehen lassen.",
+      "source_url": "https://eur-lex.europa.eu/legal-content/DE/TXT/?uri=CELEX:32011R1169",
+      "tags": ["krankheit", "heilung", "vorbeugung", "lebensmittel"]
+    },
+    {
+      "chunk_id": "lfgb-11-1",
+      "regulation_id": "LFGB",
+      "article": "11",
+      "paragraph": "1",
+      "title": "Schutz vor Täuschung beim Inverkehrbringen",
+      "snippet": "Es ist verboten, als Verantwortlicher nach Art. 8 Abs. 1 LMIV Lebensmittel mit Informationen über Lebensmittel, die den Anforderungen des Art. 7 Abs. 1, auch in Verbindung mit Abs. 4, LMIV nicht entsprechen, in den Verkehr zu bringen oder allgemein oder im Einzelfall dafür zu werben.",
+      "source_url": "https://www.gesetze-im-internet.de/lfgb/__11.html",
+      "tags": ["taeuschung", "werbung", "inverkehrbringen"]
+    },
+    {
+      "chunk_id": "lfgb-12-1",
+      "regulation_id": "LFGB",
+      "article": "12",
+      "paragraph": "1",
+      "title": "Verbot krankheitsbezogener Werbung für Lebensmittel",
+      "snippet": "Es ist verboten, in der Werbung für Lebensmittel allgemein oder im Einzelfall Aussagen zu verwenden, die sich auf die Beseitigung, Linderung oder Verhütung von Krankheiten beziehen. Das Verbot gilt insbesondere für 1. Aussagen, mit denen einem Lebensmittel die Eigenschaft beigelegt wird, Krankheiten oder krankhafte Beschwerden vorzubeugen oder zu beseitigen, 2. Hinweise auf einzelne Krankengeschichten, 3. Verwendung von ärztlichen Empfehlungen oder Gutachten in irreführender Weise.",
+      "source_url": "https://www.gesetze-im-internet.de/lfgb/__12.html",
+      "tags": ["krankheitsbezug", "werbung", "lebensmittel"]
+    },
+    {
+      "chunk_id": "hwg-3-1",
+      "regulation_id": "HWG",
+      "article": "3",
+      "paragraph": "1",
+      "title": "Verbot irreführender Werbung für Heilmittel",
+      "snippet": "Eine irreführende Werbung ist unzulässig. Eine Irreführung liegt insbesondere dann vor, wenn 1. Arzneimitteln, Medizinprodukten, Verfahren, Behandlungen, Gegenständen oder anderen Mitteln eine therapeutische Wirksamkeit oder Wirkungen beigelegt werden, die sie nicht haben, 2. fälschlich der Eindruck erweckt wird, dass ein Erfolg mit Sicherheit erwartet werden kann oder dass nach bestimmungsgemäßem oder längerem Gebrauch keine schädlichen Wirkungen eintreten.",
+      "source_url": "https://www.gesetze-im-internet.de/heilmwerbg/__3.html",
+      "tags": ["heilmittel", "irrefuehrung", "wirkungsversprechen"]
+    },
+    {
+      "chunk_id": "hwg-11-1",
+      "regulation_id": "HWG",
+      "article": "11",
+      "paragraph": "1",
+      "title": "Beschränkungen der Publikumswerbung für Heilmittel",
+      "snippet": "Außerhalb der Fachkreise darf für Arzneimittel, Verfahren, Behandlungen, Gegenstände oder andere Mittel nicht geworben werden u. a. mit 1. Gutachten, Zeugnissen, wissenschaftlichen oder fachlichen Veröffentlichungen sowie mit Hinweisen darauf, 2. Angaben, dass das Mittel ärztlich, zahnärztlich, tierärztlich oder anderweitig fachlich empfohlen oder geprüft sei oder angewendet werde, 3. der Wiedergabe von Krankengeschichten sowie mit Hinweisen darauf.",
+      "source_url": "https://www.gesetze-im-internet.de/heilmwerbg/__11.html",
+      "tags": ["publikumswerbung", "heilmittel", "fachkreise", "empfehlung"]
+    },
+    {
+      "chunk_id": "uwg-5-1",
+      "regulation_id": "UWG",
+      "article": "5",
+      "paragraph": "1",
+      "title": "Irreführende geschäftliche Handlungen",
+      "snippet": "Unlauter handelt, wer eine irreführende geschäftliche Handlung vornimmt, die geeignet ist, den Verbraucher oder sonstigen Marktteilnehmer zu einer geschäftlichen Entscheidung zu veranlassen, die er andernfalls nicht getroffen hätte. Eine geschäftliche Handlung ist irreführend, wenn sie unwahre Angaben enthält oder sonstige zur Täuschung geeignete Angaben über wesentliche Merkmale der Ware oder Dienstleistung wie Beschaffenheit, Vorteile, Risiken, Zusammensetzung, Verwendung, geographische oder betriebliche Herkunft macht.",
+      "source_url": "https://www.gesetze-im-internet.de/uwg_2004/__5.html",
+      "tags": ["uwg", "irrefuehrung", "wettbewerb"]
+    },
+    {
+      "chunk_id": "uwg-5a-1",
+      "regulation_id": "UWG",
+      "article": "5a",
+      "paragraph": "1",
+      "title": "Irreführung durch Unterlassen",
+      "snippet": "Unlauter handelt, wer einen Verbraucher oder sonstigen Marktteilnehmer irreführt, indem er ihm eine wesentliche Information vorenthält, die er nach den Umständen unter Berücksichtigung aller Beschränkungen des Kommunikationsmittels benötigt, um eine informierte geschäftliche Entscheidung zu treffen, und deren Vorenthalten geeignet ist, ihn zu einer geschäftlichen Entscheidung zu veranlassen, die er andernfalls nicht getroffen hätte.",
+      "source_url": "https://www.gesetze-im-internet.de/uwg_2004/__5a.html",
+      "tags": ["uwg", "unterlassen", "informationspflicht"]
+    },
+    {
+      "chunk_id": "uwg-8-1",
+      "regulation_id": "UWG",
+      "article": "8",
+      "paragraph": "1",
+      "title": "Beseitigung und Unterlassung (Abmahnwesen)",
+      "snippet": "Wer eine nach § 3 oder § 7 unzulässige geschäftliche Handlung vornimmt, kann auf Beseitigung und bei Wiederholungsgefahr auf Unterlassung in Anspruch genommen werden. Der Anspruch auf Unterlassung besteht bereits dann, wenn eine derartige Zuwiderhandlung droht. Anspruchsberechtigt sind insbesondere Mitbewerber sowie nach § 8b qualifizierte Wirtschaftsverbände und Verbraucherzentralen.",
+      "source_url": "https://www.gesetze-im-internet.de/uwg_2004/__8.html",
+      "tags": ["abmahnung", "unterlassung", "wettbewerbszentrale"]
+    }
+  ]
+}
