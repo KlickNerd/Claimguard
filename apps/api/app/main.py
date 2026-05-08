@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
@@ -11,6 +12,13 @@ from app.api.prompts import router as prompts_router
 from app.api.rewrites import router as rewrites_router
 from app.config import settings
 from app.services.prompt_loader import get_prompt_loader
+
+# uvicorn ships with WARNING-level for application loggers, so the
+# pipeline's per-stage info logs would be invisible in production. Bump
+# our app namespace to INFO so the API-Container logs show where time
+# goes (detection / retrieval / evaluation), without flooding the
+# output with every third-party DEBUG line.
+logging.getLogger("app").setLevel(logging.INFO)
 
 
 @asynccontextmanager

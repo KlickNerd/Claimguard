@@ -63,17 +63,25 @@ class DetectionOnlyPipeline:
                 "ClaimGuard unterstützt im MVP nur deutschsprachige Texte.",
             )
 
+        logger.info("Pipeline: starting detection (%d chars)", len(normalized))
         detection: DetectionResult = await asyncio.to_thread(
             self.detector.detect,
             normalized,
+        )
+        logger.info(
+            "Pipeline: detection done (%d claims, %d ms)",
+            len(detection.claims),
+            detection.latency_ms,
         )
 
         warnings: list[str] = []
         evidence_per_claim: dict[str, list[RetrievalHit]] = {}
         if self.retriever is not None and detection.claims:
+            logger.info("Pipeline: starting retrieval for %d claims", len(detection.claims))
             evidence_per_claim, retrieval_warning = await self._gather_evidence(
                 detection.claims,
             )
+            logger.info("Pipeline: retrieval done")
             if retrieval_warning:
                 warnings.append(retrieval_warning)
 
@@ -83,15 +91,48 @@ class DetectionOnlyPipeline:
         evaluation_tokens_out = 0
 
         if self.evaluator is not None and detection.claims:
-            evaluation = await self.evaluator.evaluate_all(
-                claims=detection.claims,
-                full_text=normalized,
-                evidence_per_claim=evidence_per_claim,
-            )
-            evaluated_claims = evaluation.evaluated_claims
-            evaluation_latency_ms = evaluation.latency_ms
-            evaluation_tokens_in = evaluation.total_input_tokens
-            evaluation_tokens_out = evaluation.total_output_tokens
+            logger.info("Pipeline: starting evaluation for %d claims", len(detection.claims))
+            try:
+                # Hard cap on the entire evaluation phase. Per-claim
+                # timeouts already exist inside evaluate_all; this is a
+                # belt-and-braces bound so the request always returns
+                # something well under Caddy's 300 s budget, even if
+                # a flurry of slow calls + retries stack up.
+                evaluation = await asyncio.wait_for(
+                    self.evaluator.evaluate_all(
+                        claims=detection.claims,
+                        full_text=normalized,
+                        evidence_per_claim=evidence_per_claim,
+                    ),
+                    timeout=220.0,
+                )
+                evaluated_claims = evaluation.evaluated_claims
+                evaluation_latency_ms = evaluation.latency_ms
+                evaluation_tokens_in = evaluation.total_input_tokens
+                evaluation_tokens_out = evaluation.total_output_tokens
+                logger.info(
+                    "Pipeline: evaluation done (%d/%d evaluated, %d ms)",
+                    len(evaluated_claims),
+                    len(detection.claims),
+                    evaluation_latency_ms,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Pipeline: evaluation phase exceeded 220 s budget, returning detection-only.",
+                )
+                warnings.append(
+                    "Bewertung wurde abgebrochen (Zeitlimit erreicht). Erkannte Claims sind sichtbar - "
+                    "bitte erneut versuchen oder Text in kleinere Abschnitte teilen.",
+                )
+
+            if (
+                len(evaluated_claims) < len(detection.claims)
+                and len(evaluated_claims) > 0
+            ):
+                warnings.append(
+                    "Einige Claims konnten nicht bewertet werden (Timeout oder Anthropic-Fehler). "
+                    "Erkannte Claims sind sichtbar; bitte erneut versuchen für die fehlenden Bewertungen.",
+                )
 
         if len(detection.claims) == 0:
             warnings.append(
@@ -142,12 +183,18 @@ class DetectionOnlyPipeline:
 
         async def fetch(claim: DetectedClaim) -> tuple[str, list[RetrievalHit] | None]:
             try:
-                result = await asyncio.to_thread(
-                    self.retriever.retrieve_for_claim,
-                    claim,
-                    top_k=self.retrieval_top_k,
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.retriever.retrieve_for_claim,
+                        claim,
+                        top_k=self.retrieval_top_k,
+                    ),
+                    timeout=20.0,
                 )
                 return str(claim.id), result.hits
+            except asyncio.TimeoutError:
+                logger.warning("Retrieval timed out for claim %s after 20 s", claim.id)
+                return str(claim.id), None
             except Exception as exc:
                 logger.warning("Retrieval failed for claim %s: %s", claim.id, exc)
                 return str(claim.id), None

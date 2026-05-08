@@ -150,12 +150,28 @@ class ClaimEvaluator:
         async def bounded(claim: DetectedClaim) -> tuple[EvaluatedClaim | None, int, int]:
             async with semaphore:
                 evidence = evidence_per_claim.get(str(claim.id), [])
-                return await asyncio.to_thread(
-                    self._evaluate_single,
-                    claim,
-                    full_text,
-                    evidence,
-                )
+                # Per-claim cap so a single slow Anthropic call (or one
+                # stuck on retry-backoff) cannot keep asyncio.gather
+                # waiting past Caddy's 300 s read_timeout. 90 s leaves
+                # room for the SDK's 60 s call timeout + one retry; if
+                # we still don't have a verdict by then, drop the claim
+                # and let the rest of the pipeline finish so the user
+                # gets a partial report instead of a 504.
+                try:
+                    return await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self._evaluate_single,
+                            claim,
+                            full_text,
+                            evidence,
+                        ),
+                        timeout=90.0,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Evaluation timed out for claim %s after 90 s", claim.id,
+                    )
+                    return None, 0, 0
 
         results = await asyncio.gather(*(bounded(c) for c in claims))
 
