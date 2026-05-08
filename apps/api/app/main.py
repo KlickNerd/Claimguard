@@ -13,12 +13,19 @@ from app.api.rewrites import router as rewrites_router
 from app.config import settings
 from app.services.prompt_loader import get_prompt_loader
 
-# uvicorn ships with WARNING-level for application loggers, so the
-# pipeline's per-stage info logs would be invisible in production. Bump
-# our app namespace to INFO so the API-Container logs show where time
-# goes (detection / retrieval / evaluation), without flooding the
-# output with every third-party DEBUG line.
-logging.getLogger("app").setLevel(logging.INFO)
+# uvicorn's dictConfig wires handlers onto the ``uvicorn`` logger but
+# leaves ``app.*`` with no handler at all, so logger.info() calls from
+# our code propagate to root - and root defaults to WARNING. Attach an
+# explicit StreamHandler at INFO and disable propagation so we get the
+# per-stage pipeline logs in production without depending on uvicorn's
+# default-handler quirks (and without double-printing through root).
+_app_logger = logging.getLogger("app")
+_app_logger.setLevel(logging.INFO)
+if not _app_logger.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+    _app_logger.addHandler(_h)
+_app_logger.propagate = False
 
 
 @asynccontextmanager

@@ -181,23 +181,35 @@ class DetectionOnlyPipeline:
         """Run retrieval per claim in parallel; tolerate KB outages."""
         assert self.retriever is not None
 
+        # Cap concurrent retrieval. Each call runs an in-process E5
+        # embedding + Qdrant query + Postgres FTS query in a thread.
+        # Without a bound, a 40-claim analysis fans out 40 parallel
+        # threads that all contend for the same E5 weights under the
+        # GIL and saturate the default ThreadPoolExecutor (~32 workers
+        # in Python 3.12) - the observed failure mode is every claim
+        # hitting the 20 s wait_for and returning empty evidence.
+        # Four concurrent retrievals is enough to keep the GPU/CPU
+        # warm without thrashing.
+        semaphore = asyncio.Semaphore(4)
+
         async def fetch(claim: DetectedClaim) -> tuple[str, list[RetrievalHit] | None]:
-            try:
-                result = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self.retriever.retrieve_for_claim,
-                        claim,
-                        top_k=self.retrieval_top_k,
-                    ),
-                    timeout=20.0,
-                )
-                return str(claim.id), result.hits
-            except asyncio.TimeoutError:
-                logger.warning("Retrieval timed out for claim %s after 20 s", claim.id)
-                return str(claim.id), None
-            except Exception as exc:
-                logger.warning("Retrieval failed for claim %s: %s", claim.id, exc)
-                return str(claim.id), None
+            async with semaphore:
+                try:
+                    result = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self.retriever.retrieve_for_claim,
+                            claim,
+                            top_k=self.retrieval_top_k,
+                        ),
+                        timeout=20.0,
+                    )
+                    return str(claim.id), result.hits
+                except asyncio.TimeoutError:
+                    logger.warning("Retrieval timed out for claim %s after 20 s", claim.id)
+                    return str(claim.id), None
+                except Exception as exc:
+                    logger.warning("Retrieval failed for claim %s: %s", claim.id, exc)
+                    return str(claim.id), None
 
         results = await asyncio.gather(*(fetch(c) for c in claims))
 
