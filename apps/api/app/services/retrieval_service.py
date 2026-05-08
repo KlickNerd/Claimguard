@@ -86,7 +86,11 @@ class RetrievalService:
         if not query.strip():
             return RetrievalResult(query=query, hits=[], latency_ms=0)
 
+        t_embed = time.perf_counter()
         vector = embed_one(query, kind="query")
+        embed_ms = int((time.perf_counter() - t_embed) * 1000)
+
+        t_qdrant = time.perf_counter()
         per_source_hits: list[list[RetrievalHit]] = []
         for collection, source_type in _SOURCE_COLLECTIONS:
             try:
@@ -102,14 +106,17 @@ class RetrievalService:
                 logger.warning("Qdrant search failed on %s: %s", collection, exc)
                 continue
             per_source_hits.append([_to_hit(p, source_type) for p in points])
+        qdrant_ms = int((time.perf_counter() - t_qdrant) * 1000)
 
         # FTS half - failure is non-fatal so a Postgres outage degrades
         # retrieval to vector-only instead of breaking the whole pipeline.
+        t_fts = time.perf_counter()
         try:
             fts_ranking = _fts_ranking(query, limit=self._per_top_k)
         except Exception as exc:
             logger.warning("Postgres FTS search failed: %s", exc)
             fts_ranking = []
+        fts_ms = int((time.perf_counter() - t_fts) * 1000)
         if fts_ranking:
             per_source_hits.append(fts_ranking)
 
@@ -119,7 +126,9 @@ class RetrievalService:
         # ts_rank scores are too flat on legal German to use directly -
         # the cross-encoder reads (query, snippet) end-to-end and gives
         # a real relevance score we can threshold on.
+        rerank_ms = 0
         if self._enable_rerank and fused:
+            t_rerank = time.perf_counter()
             pool = fused[: self._rerank_pool_size]
             passages = [f"{h.reference}\n{h.snippet}" for h in pool]
             try:
@@ -147,8 +156,21 @@ class RetrievalService:
                         ),
                     )
                 fused = hits
+            rerank_ms = int((time.perf_counter() - t_rerank) * 1000)
 
         elapsed_ms = int((time.perf_counter() - started) * 1000)
+        # Per-call breakdown lets the next 504 diagnose itself: a 19-second
+        # call with rerank=18000 means the cross-encoder is the bottleneck;
+        # a 19-second call with qdrant=18000 means Qdrant is the bottleneck.
+        logger.info(
+            "Retrieval call: total=%dms embed=%dms qdrant=%dms fts=%dms rerank=%dms hits=%d",
+            elapsed_ms,
+            embed_ms,
+            qdrant_ms,
+            fts_ms,
+            rerank_ms,
+            len(fused[:top_k]),
+        )
         return RetrievalResult(query=query, hits=fused[:top_k], latency_ms=elapsed_ms)
 
 
@@ -279,5 +301,12 @@ _default: RetrievalService | None = None
 def get_retrieval_service() -> RetrievalService:
     global _default
     if _default is None:
-        _default = RetrievalService()
+        # ADR-0004: reranker is V1.1 territory. On the production VPS the
+        # bge-reranker-v2-m3 cross-encoder runs on CPU in the same process
+        # as the E5 embedder; with 40+ claims fanning out, contention on
+        # the GIL and the model state pushed every retrieval call past
+        # the 20 s timeout. Ship MVP without rerank - RRF on cosine + FTS
+        # is good enough at ~ 420 KB chunks. Re-enable when we put the
+        # reranker behind its own service or move to GPU.
+        _default = RetrievalService(enable_rerank=False)
     return _default
