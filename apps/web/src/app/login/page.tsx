@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { Suspense, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertCircle } from "lucide-react";
@@ -11,7 +11,17 @@ import { AuthShell } from "@/components/auth/auth-shell";
 import { GoogleButton } from "@/components/auth/google-button";
 import { supabase } from "@/lib/supabase";
 
+// useSearchParams() needs a <Suspense> wrapper, otherwise Next.js
+// bails out of static prerender and the build fails.
 export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginInner />
+    </Suspense>
+  );
+}
+
+function LoginInner() {
   const router = useRouter();
   const params = useSearchParams();
   const redirectTo = params.get("redirect") ?? "/app";

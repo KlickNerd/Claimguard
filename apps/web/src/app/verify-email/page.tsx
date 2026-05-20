@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { CheckCircle2, Mail } from "lucide-react";
@@ -8,7 +8,18 @@ import { Button } from "@/components/ui/button";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { supabase } from "@/lib/supabase";
 
+// useSearchParams() forces a client-render bailout in Next.js, which
+// breaks static prerender unless wrapped in <Suspense>. The page export
+// is a thin Suspense shell; the actual UI lives in VerifyEmailInner.
 export default function VerifyEmailPage() {
+  return (
+    <Suspense fallback={null}>
+      <VerifyEmailInner />
+    </Suspense>
+  );
+}
+
+function VerifyEmailInner() {
   const params = useSearchParams();
   const email = params.get("email") ?? "";
   const [resending, setResending] = useState(false);
