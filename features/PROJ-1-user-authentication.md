@@ -1,6 +1,6 @@
 # PROJ-1: User Authentication
 
-## Status: Planned
+## Status: In Progress (Backend done — Frontend pending)
 **Created:** 2026-04-23
 **Last Updated:** 2026-04-23
 **Backlog-Referenz:** F-040
@@ -49,6 +49,33 @@
 
 ---
 <!-- Sections below are added by subsequent skills -->
+
+## Implementation Notes (Backend, 2026-05-11)
+
+**Was gebaut wurde:**
+- Migration [supabase/migrations/20260511_0001_profiles.sql](../supabase/migrations/20260511_0001_profiles.sql) — `profiles`-Tabelle mit FK auf `auth.users`, RLS-Policies (SELECT/UPDATE nur Owner), `handle_new_user`-Trigger (SECURITY DEFINER) für atomare Profil-Erzeugung bei Sign-Up, `touch_updated_at`-Trigger für automatisches `updated_at`.
+- [apps/api/app/schemas/user.py](../apps/api/app/schemas/user.py) — Pydantic-Modelle `CurrentUser`, `Profile`, `ProfileUpdate`.
+- [apps/api/app/services/supabase_client.py](../apps/api/app/services/supabase_client.py) — Lazy-Singleton-Wrapper für den Server-side Supabase-Client (Service-Role-Key).
+- [apps/api/app/core/auth.py](../apps/api/app/core/auth.py) — `get_current_user`-FastAPI-Dependency: extrahiert Bearer-Token, validiert via `supabase.auth.get_user(jwt)`, lädt das Profil best-effort. Plus `require_profile` für strikte Endpoints. 401 für fehlende/ungültige Token, 503 wenn Supabase-Env nicht konfiguriert ist.
+- [apps/api/app/core/rate_limit.py](../apps/api/app/core/rate_limit.py) — Redis-Sliding-Window-Helper (`check_rate_limit(key, limit, window_seconds)`), fail-open bei Redis-Outage. Bereit für PROJ-2-Quoten.
+- [apps/api/tests/test_core_auth.py](../apps/api/tests/test_core_auth.py) (8 Tests) + [apps/api/tests/test_core_rate_limit.py](../apps/api/tests/test_core_rate_limit.py) (3 Tests). Alle grün, gesamte Suite 159/159.
+- Dep ergänzt: `pydantic[email]` für `EmailStr`.
+
+**Bewusst NICHT angefasst (kommt erst nach `/frontend PROJ-1`):**
+- Bestehende Endpoints (`/api/analyses` etc.) sind weiterhin OHNE `Depends(get_current_user)`. Begründung: Spec-Deploy-Note „Erst Frontend mit Auth-Flow, dann Backend mit Auth-Pflicht". Wenn das Backend jetzt schon Auth verlangen würde, wäre die App komplett 401-blockiert bis Frontend gepusht ist.
+- Login-/Register-Rate-Limit per IP+E-Mail im FastAPI: nicht gebaut, weil der Login-Flow direkt im Frontend gegen Supabase läuft (FastAPI sieht ihn gar nicht). Supabase hat eigene generische Login-Rate-Limits, die für MVP reichen. Wenn wir später feiner werden müssen, gibt es zwei Optionen: (a) Auth-Proxy-Endpoint in FastAPI wrappen, oder (b) Supabase Edge Function — beides ist eine eigene Iteration wert.
+
+**Env-Vorraussetzungen für Production-Deploy:**
+- `SUPABASE_URL` und `SUPABASE_SERVICE_ROLE_KEY` in `.env.production` (Slots in `app/config.py` existieren bereits).
+- Migration in Supabase-Dashboard via SQL-Editor anwenden oder via Supabase-CLI `supabase db push`.
+
+**Offene Fragen (für `/frontend PROJ-1`):**
+- Aktivierung des `apps/web/src/lib/supabase.ts`-Stubs (aktuell `null`-Export).
+- Next.js `middleware.ts` für Protected Routes.
+- Login-/Register-/Reset-Forms gegen Supabase JS-Client.
+- JWT als HttpOnly-Cookie + im `Authorization: Bearer …`-Header für API-Calls weitergeben.
+
+---
 
 ## Tech Design (Solution Architect)
 
