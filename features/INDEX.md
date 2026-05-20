@@ -14,7 +14,7 @@
 
 | ID | Feature | Status | Spec | Created |
 |----|---------|--------|------|---------|
-| PROJ-1 | User Authentication | Planned | [PROJ-1](PROJ-1-user-authentication.md) | 2026-04-23 |
+| PROJ-1 | User Authentication | Architected | [PROJ-1](PROJ-1-user-authentication.md) | 2026-04-23 |
 | PROJ-2 | Plan- & Nutzungs-Verwaltung | Planned | [PROJ-2](PROJ-2-plan-usage-management.md) | 2026-04-23 |
 | PROJ-3 | Stripe-Integration (Subscription) | Planned | [PROJ-3](PROJ-3-stripe-subscription.md) | 2026-04-23 |
 | PROJ-4 | EU-Claim-Register-Integration | In Progress | [PROJ-4](PROJ-4-eu-claim-register.md) | 2026-04-23 |
