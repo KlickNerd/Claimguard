@@ -1,15 +1,19 @@
 # ClaimGuard Caddy configuration.
 #
-# One domain, two routes:
+# One canonical domain, two routes:
 #   * /api/*   -> FastAPI backend (Sonnet pipeline, retrieval, etc.)
-#   * /*       -> Next.js frontend
+#   * /*       -> Next.js frontend (marketing site at /, app at /app)
 #
-# Caddy automatically provisions a Let's-Encrypt cert for the domain
-# at startup and renews it; no manual ACME / certbot work required.
+# Caddy automatically provisions Let's-Encrypt certs for every host
+# listed below and renews them; no manual ACME / certbot work required.
 #
 # DOMAIN is templated from the docker-compose env so we don't bake the
-# value into the repo.
+# canonical value into the repo. The www-redirect block sits next to it
+# so visitors landing on www.claim-guard.de get bounced to the bare host
+# with a 301 - standard SEO practice, avoids cookie/duplicate-content
+# split-brain.
 
+# Bare-domain canonical host.
 {$DOMAIN} {
 	encode zstd gzip
 
@@ -50,4 +54,12 @@
 		format console
 		level INFO
 	}
+}
+
+# www-Subdomain: 301 to the canonical bare host. Caddy still has to
+# obtain a cert for www.{domain} so the redirect can serve over HTTPS;
+# point a CNAME or A record at the VPS for www, otherwise this block
+# stays inert (no harm, Caddy just skips it).
+www.{$DOMAIN} {
+	redir https://{$DOMAIN}{uri} permanent
 }
