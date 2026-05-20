@@ -34,7 +34,7 @@
 | PROJ-18 | Marketing Landing Page + Beta-Waitlist | In Progress | [PROJ-18](PROJ-18-marketing-landing.md) | 2026-04-24 |
 | PROJ-19 | Erweiterte Rechtsquellen (LFGB/LMIV/HWG/UWG) | In Progress | [PROJ-19](PROJ-19-extended-legal-sources.md) | 2026-05-01 |
 | PROJ-20 | KI-Chat-Assistent (Analyse-Context) | Architected | [PROJ-20](PROJ-20-ai-chat-assistant.md) | 2026-05-11 |
-| PROJ-21 | Analyses-Persistierung | Planned | [PROJ-21](PROJ-21-analyses-persistence.md) | 2026-05-11 |
+| PROJ-21 | Analyses-Persistierung | Architected | [PROJ-21](PROJ-21-analyses-persistence.md) | 2026-05-11 |
 
 <!-- Add features above this line -->
 
