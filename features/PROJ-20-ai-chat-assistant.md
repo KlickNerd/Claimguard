@@ -111,7 +111,108 @@
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /architecture_
+
+### Großer Bogen
+
+Der Chat sitzt **rechts neben der Analyse als Schiebepanel** (Drawer/Sheet) und teilt sich den Editor mit dem bestehenden Report. Beim ersten Öffnen fragt das Frontend die gespeicherten Chat-Nachrichten dieser Analyse aus Supabase ab. Eingaben gehen an einen neuen Streaming-Endpoint im Backend, der den vollen Analyse-Context (Eingabetext + Claims + Bewertungen + Rechtsquellen) als zwischengespeicherten Block an Sonnet 4.6 schickt und die Antwort Token für Token zurückstreamt. Schlägt die KI eine Textänderung vor, kommt sie nicht als Fließtext sondern als strukturierter Tool-Aufruf zurück, den die UI als Diff-Block mit „Übernehmen"-Button rendert.
+
+### Komponentenstruktur (Frontend)
+
+```
+Report-Seite (PROJ-14, bestehend)
+├── MarkdownEditor (bestehend, bekommt eine Methode "Range ersetzen")
+├── Claims-Spalte (bestehend)
+├── Chat-Button (neu) — schwebt unten rechts oder Header-Icon
+│   └── öffnet:
+└── ChatSheet (neu, baut auf shadcn Sheet)
+    ├── Header: Analyse-Titel + Schließen-Button
+    ├── Verlauf (scrollbar, zeigt alte + Live-Nachrichten)
+    │   ├── UserMessage (rechts ausgerichtet, einfacher Text)
+    │   ├── AssistantMessage (links, mit blinkendem Cursor während des Streamings)
+    │   └── ProposeChangeCard (neu) — Spezial-Variante für Tool-Aufrufe
+    │       ├── Diff-Anzeige (alt rot durchgestrichen / neu grün)
+    │       ├── Begründungs-Text der KI
+    │       └── "Übernehmen" / "Verwerfen" Buttons
+    ├── Selection-Edit-Banner (neu) — nur sichtbar, wenn der User Text markiert hat
+    │   └── zeigt "Du hast X Zeichen markiert — was soll geändert werden?" + Quick-Prompt-Input
+    └── Eingabefeld + Senden-Button (+ Abbrechen, während Streaming läuft)
+```
+
+### Datenmodell (in Worten)
+
+**Neue Tabelle: `chat_messages`** (Supabase Postgres, EU)
+
+Jede Nachricht trägt:
+- eine eindeutige ID,
+- eine Zuordnung zur Analyse (Foreign Key auf die bestehende `analyses`-Tabelle),
+- eine Rolle (`user`, `assistant`, oder `tool` für Tool-Aufrufe der KI),
+- den Inhalt — entweder als Klartext oder als strukturiertes JSON (für Tool-Aufrufe mit `old_text` / `new_text` / `rationale`),
+- Token-Verbrauch (Input + Output, damit PROJ-2 Plan-Limits zählen kann),
+- einen Zeitstempel.
+
+**Row-Level-Security:** Nur der Owner der zugehörigen Analyse (über die bereits vorhandene `user_id` auf der Analyse) darf Nachrichten lesen oder schreiben.
+
+**Bewusst NICHT mitgespeichert:** Der Analyse-Context (Claims, Bewertungen, Rechtsquellen). Der lebt bereits in der `analyses`-Tabelle und wird bei jeder Chat-Anfrage frisch zusammengestellt — so spiegeln sich Editor-Änderungen zwischen zwei Chat-Nachrichten sofort im Kontext der KI.
+
+### Backend (FastAPI)
+
+**Neuer Endpoint:** `POST /api/analyses/{analysis_id}/chat`
+- nimmt die neue Nachricht des Users entgegen,
+- lädt aus Supabase Analyse-Snapshot + die letzten ~20 Chat-Nachrichten,
+- baut den Anthropic-Prompt aus: System-Prompt (versioniert) + Analyse-Context (mit Cache-Marker) + Chat-Historie + neue Nachricht,
+- streamt die Sonnet-Antwort als Server-Sent-Events zurück,
+- persistiert die User-Nachricht sofort, die Assistant-Nachricht nach Ende des Streams.
+
+**Neuer Service:** `ChatService` (analog zur Struktur von `RewriteService` / `ClaimEvaluator`)
+- baut Prompts, ruft Anthropic auf, definiert das `propose_text_change`-Tool,
+- nutzt den bereits gehärteten `anthropic_client` (Timeouts, Retries — Fixes der letzten Iteration),
+- lädt seinen versionierten System-Prompt aus `apps/api/app/prompts/chat_system_v1.0.0.md`.
+
+**Tool-Definition für die KI:** `propose_text_change(old_text, new_text, rationale)`. Der System-Prompt instruiert die KI, dieses Tool zu nutzen, sobald sie eine konkrete Textänderung vorschlägt — statt das nur in Fließtext zu schreiben. So weiß das Frontend immer eindeutig, wann ein Apply-Button gerendert werden muss.
+
+### Tech-Entscheidungen (das Warum)
+
+1. **Server-Sent-Events statt WebSocket** — Streaming ist einseitig (Server → Client). SSE läuft über normales HTTPS, ist hinter Caddy ohne Sonderkonfiguration unterstützt, hat automatisches Reconnect, und das Anthropic-SDK liefert nativ einen Stream-Iterator, den der Endpoint nur durchschleifen muss.
+
+2. **Tool-Use für Textänderungen statt Markdown-Parsing** — Würde die KI im Fließtext „ich würde X durch Y ersetzen" schreiben, müssten wir mit Regex erraten, was gemeint ist. Mit einem strukturierten Tool-Aufruf bekommen wir das maschinenlesbar zurück und sparen uns fragiles Parsen.
+
+3. **Sliding Window für die Chat-Historie (~20 Nachrichten)** — Bei längeren Verläufen würde der gesamte Chat den Anthropic-Prompt aufblähen und teuer machen. Die UI zeigt weiterhin alle Nachrichten, aber Anthropic sieht nur das relevante Ende. Ältere Nachrichten bleiben in Supabase liegen.
+
+4. **Prompt-Caching auf System-Prompt + Analyse-Context** — Der Context (kompletter Input + Claims + Bewertungen + Rechtsquellen) ist groß, oft 10–20k Tokens. Mit dem Cache-Marker liest Anthropic den gleichen Block in den nächsten ~5 Minuten zu 10 % des Preises wieder ein — bei mehreren aufeinanderfolgenden Fragen zur selben Analyse spart das deutlich.
+
+5. **Versionierter Prompt-File analog zu Detection / Evaluation** — Das Prompt-Engineering wird sich entwickeln (was darf die KI sagen, wann soll sie Tools nutzen, wie zitiert sie Quellen). Versionierung erlaubt A/B-Tests und sauberen Rollback wie bei den anderen Prompts.
+
+6. **Diff-Anzeige als eigene Komponente, keine externe Lib** — Wir zeigen genau zwei Blöcke: alt (rot durchgestrichen) und neu (grün hervorgehoben). Eine externe Diff-Lib wäre Overkill und 30+ KB im Frontend-Bundle. Eine kleine eigene Komponente reicht.
+
+7. **Frontend-Apply via Text-Suche, nicht via Position** — Die KI liefert `old_text` als String, und das Frontend sucht den exakt im aktuellen Editor-Inhalt und ersetzt das erste Vorkommen. Vorteil: robust gegen User-Edits zwischen KI-Vorschlag und Klick auf „Übernehmen" — solange der Text noch da ist, klappt es; wenn nicht, kommt eine klare Fehlermeldung.
+
+### Dependencies
+
+**Neu zu installieren:** keine. Sheet ist installiert, Streaming geht mit der nativen `fetch`-API plus `ReadableStream`, Markdown-Rendering existiert bereits. Backend-seitig ist das Anthropic-SDK schon eingebunden, FastAPI kann SSE nativ, und Supabase-Postgres ist gehookt.
+
+**Bereits vorhanden, neu genutzt:**
+- shadcn `Sheet` als Drawer
+- TipTap-Editor-API für das Ersetzen markierter Stellen
+- `anthropic_client` aus den letzten Pipeline-Fixes
+- `prompt_loader` zum Laden des versionierten Chat-Prompts
+
+### Migration / Datenbank
+
+Eine neue Supabase-Migration legt die `chat_messages`-Tabelle an, samt Index auf `analysis_id` und RLS-Policy. Alle bestehenden Daten bleiben unangetastet — es ist eine reine Erweiterung, kein Schema-Change am Bestand.
+
+### Risiken & Mitigationen
+
+- **Latenz bis zum ersten Token** — bei großem Context und kaltem Cache 2–3 s. Mitigation: Skeleton-/Pulsanimation während der Wartezeit; optionales Cache-Vorwärmen beim Öffnen des Drawers (V1.1).
+- **KI halluziniert `old_text`** — Apply-Button schlägt fehl, Vorschlag bleibt aber sichtbar zum manuellen Übernehmen. Akzeptabel im MVP.
+- **Token-Kostenexplosion bei langer Konversation** — Sliding Window plus PROJ-2 Plan-Limits begrenzen den Schaden.
+- **Race-Condition: User editiert, während KI antwortet** — Apply auf den veränderten Editor schlägt sauber fehl wie oben.
+
+### Offene Fragen aus der Spec — beantwortet
+
+- **Diff-View-Lib:** eigene minimale Komponente, keine Dep.
+- **SSE vs. fetch-streaming:** SSE (siehe Begründung 1).
+- **Tool-Definition Ort:** inline im `ChatService` fürs MVP. Wenn PROJ-7 Tool-Definitionen versioniert, später dorthin.
+- **Chat-System-Prompt als versionierte Datei:** ja, `apps/api/app/prompts/chat_system_v1.0.0.md`.
 
 ## QA Test Results
 _To be added by /qa_
