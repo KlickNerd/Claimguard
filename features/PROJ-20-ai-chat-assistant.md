@@ -1,8 +1,12 @@
 # PROJ-20: KI-Chat-Assistent (Analyse-Context)
 
-## Status: Planned
+## Status: Architected (blockiert auf Pre-Reqs)
 **Created:** 2026-05-11
 **Last Updated:** 2026-05-11
+
+> ⚠️ **Implementierung pausiert** — beim Backend-Skill-Start (2026-05-11) wurde festgestellt, dass die nötigen Grundlagen fehlen: aktuell ist die API stateless (keine `analyses`-Tabelle, History nutzt Mock-Daten) und PROJ-1 (Auth) ist noch nicht implementiert, also gibt es kein `auth.uid()` für die RLS-Policy auf `chat_messages`. Backend für PROJ-20 wartet auf:
+> 1. **PROJ-1** (User Authentication) — fertig spec'd, braucht `/architecture` + `/backend`.
+> 2. **PROJ-21** (Analyses-Persistierung) — Spec muss noch geschrieben werden. Hier wird die `analyses`-Tabelle definiert, an die `chat_messages` per Foreign Key hängt.
 
 ## Dependencies
 - Requires: PROJ-1 (User Authentication) — Chat-Verlauf gehört einem User, RLS-gesichert
