@@ -34,6 +34,7 @@ ClaimGuard ist eine SaaS-Plattform zur automatisierten Prüfung gesundheitsbezog
 | P0 (MVP) | PROJ-15 | PDF-Export des Reports | Planned |
 | P0 (MVP) | PROJ-16 | Dashboard | Planned |
 | P0 (MVP) | PROJ-17 | DSGVO-Konformität | Planned |
+| P0 (MVP) | PROJ-21 | Analyses-Persistierung | Planned |
 | P1 | PROJ-20 | KI-Chat-Assistent (Analyse-Context) | Planned |
 | P1 | – | URL-Crawling mit Bild-OCR (F-101) | Planned |
 | P1 | – | DOCX-Upload (F-102) | Planned |
