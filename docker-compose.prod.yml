@@ -88,7 +88,12 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
       args:
+        # NEXT_PUBLIC_* values are inlined into the Next.js bundle at
+        # build time, so they have to arrive as build-args; setting
+        # them only as runtime envs would not reach the browser.
         NEXT_PUBLIC_API_URL: https://${DOMAIN}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
     container_name: claimguard-web
     restart: unless-stopped
     depends_on:
