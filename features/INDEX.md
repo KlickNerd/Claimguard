@@ -33,10 +33,11 @@
 | PROJ-17 | DSGVO-Konformität | Planned | [PROJ-17](PROJ-17-dsgvo-compliance.md) | 2026-04-23 |
 | PROJ-18 | Marketing Landing Page + Beta-Waitlist | In Progress | [PROJ-18](PROJ-18-marketing-landing.md) | 2026-04-24 |
 | PROJ-19 | Erweiterte Rechtsquellen (LFGB/LMIV/HWG/UWG) | In Progress | [PROJ-19](PROJ-19-extended-legal-sources.md) | 2026-05-01 |
+| PROJ-20 | KI-Chat-Assistent (Analyse-Context) | Planned | [PROJ-20](PROJ-20-ai-chat-assistant.md) | 2026-05-11 |
 
 <!-- Add features above this line -->
 
-## Next Available ID: PROJ-20
+## Next Available ID: PROJ-21
 
 ## Recommended Build Order
 
