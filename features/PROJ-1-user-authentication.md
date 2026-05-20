@@ -1,6 +1,6 @@
 # PROJ-1: User Authentication
 
-## Status: In Progress (Backend done — Frontend pending)
+## Status: In Progress (Backend + Frontend done — auth-gating der API-Endpoints pending)
 **Created:** 2026-04-23
 **Last Updated:** 2026-04-23
 **Backlog-Referenz:** F-040
@@ -74,6 +74,39 @@
 - Next.js `middleware.ts` für Protected Routes.
 - Login-/Register-/Reset-Forms gegen Supabase JS-Client.
 - JWT als HttpOnly-Cookie + im `Authorization: Bearer …`-Header für API-Calls weitergeben.
+
+## Implementation Notes (Frontend, 2026-05-11)
+
+**Was gebaut wurde:**
+- [apps/web/src/lib/supabase.ts](../apps/web/src/lib/supabase.ts) — vom Stub auf `createBrowserClient` von `@supabase/ssr` umgestellt.
+- [apps/web/src/lib/supabase-server.ts](../apps/web/src/lib/supabase-server.ts) — zwei Server-Client-Varianten: `createServerClientFromCookies` (Server Components / Route Handlers) und `createServerClientForMiddleware` (für die Middleware mit ihrer eigenen Request/Response-Form).
+- [apps/web/src/middleware.ts](../apps/web/src/middleware.ts) — refresht Session-Cookies bei jedem Request, leitet Unauthentifizierte von `/app/*` auf `/login?redirect=…` um, und bounced eingeloggte User vom Login/Register weg auf `/app`.
+- [apps/web/src/lib/auth-context.tsx](../apps/web/src/lib/auth-context.tsx) — `<AuthProvider>` + Hooks `useAuth`, `useUser`, `useSession` mit Subscription auf `onAuthStateChange`.
+- [apps/web/src/components/auth/auth-shell.tsx](../apps/web/src/components/auth/auth-shell.tsx) — gemeinsamer Visual-Shell (Logo + Card-Frame + Footer) für alle Auth-Pages.
+- [apps/web/src/components/auth/google-button.tsx](../apps/web/src/components/auth/google-button.tsx) — Google-OAuth-Trigger mit `signInWithOAuth({ provider: "google" })` und Redirect zur `/auth/callback?next=…`.
+- [apps/web/src/components/auth/password-strength.tsx](../apps/web/src/components/auth/password-strength.tsx) — Live-Strength-Meter via zxcvbn (4-Stufen-Bar, Label + Hint); plus `getPasswordScore()` Helper für Submit-Gating.
+- [apps/web/src/app/login/page.tsx](../apps/web/src/app/login/page.tsx) — von Stub auf echte Submit-Logik (`signInWithPassword` + Redirect auf `?redirect=` oder `/app`); generische Error-Message gegen User-Enumeration.
+- [apps/web/src/app/register/page.tsx](../apps/web/src/app/register/page.tsx) — neu; `signUp` mit `emailRedirectTo` aufs Callback, Passwort-Min-12-Zeichen + zxcvbn-Score ≥ 3 als Submit-Gate, Routing zum `/verify-email`-Screen.
+- [apps/web/src/app/forgot-password/page.tsx](../apps/web/src/app/forgot-password/page.tsx) — von Stub auf echte `resetPasswordForEmail`; zeigt unconditionally Success-State, um Existenz von E-Mails nicht zu leaken.
+- [apps/web/src/app/reset-password/page.tsx](../apps/web/src/app/reset-password/page.tsx) — neu; nutzt die Recovery-Session die Supabase aus dem URL-Fragment hydratisiert, `updateUser({ password })`, neue Passwort-Strength-Validierung, Bestätigung über Passwort-Wiederholung.
+- [apps/web/src/app/verify-email/page.tsx](../apps/web/src/app/verify-email/page.tsx) — neu; „Postfach prüfen"-Screen mit Resend-Button (nutzt `supabase.auth.resend`).
+- [apps/web/src/app/auth/callback/route.ts](../apps/web/src/app/auth/callback/route.ts) — Route-Handler, der `code` gegen Session tauscht (OAuth + E-Mail-Confirm landen beide hier) und auf `next` (default `/app`) redirected; Open-Redirect-Schutz via Path-Whitelist.
+- [apps/web/src/lib/api-client.ts](../apps/web/src/lib/api-client.ts) — `authHeaders()`-Helper, der bei jedem Request den aktuellen Supabase-Access-Token aus `getSession()` zieht und als `Authorization: Bearer …` mitschickt. Sicher gegen fehlende Supabase-Config (fail-open, da Backend-Endpoints aktuell noch keine Auth verlangen).
+- [apps/web/src/app/app/layout.tsx](../apps/web/src/app/app/layout.tsx) — bekommt ein async `cookies()`-Lookup + serverseitiges `getSession()`, das initial in den `<AuthProvider>` injected wird (kein „logged-out-Flicker" beim ersten Render).
+- [apps/web/.env.local.example](../apps/web/.env.local.example) — vollständig dokumentiert (Supabase URL + Anon Key + NEXT_PUBLIC_API_URL).
+
+**Neue Deps:** `@supabase/ssr@^0.10`, `zxcvbn@^4.4`, `@types/zxcvbn` (dev). `@supabase/supabase-js` von 2.104 auf 2.106 gebumpt wegen Peer-Range von `@supabase/ssr`.
+
+**Bewusst NICHT angefasst:**
+- Das **Backend-Auth-Gating** an `/api/analyses` & Co. ist weiterhin nicht aktiv. Das ist der nächste kleine Backend-Commit (`Depends(get_current_user)` an die Endpoints hängen) — sobald der Frontend-Flow live ist, kann der Schalter umgelegt werden, ohne dass User in einer 401-Sackgasse landen.
+- Das **Theme der Login-Page** ist exakt der bestehende Stub-Style (Fraunces-Headline, Card, Status-Farben). Keine UX-Erfindungen.
+
+**Was der User testen sollte (lokal):**
+1. `.env.local` mit `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY` befüllen.
+2. `pnpm dev:web` starten.
+3. Auf `/register` einen Account anlegen → landet auf `/verify-email` → Klick auf den Link in der E-Mail → landet auf `/app`.
+4. Logout (via `useAuth().signOut()` — UI-Button kommt in einem späteren Commit) → wieder auf `/login`.
+5. `/forgot-password` flow durchspielen → reset über E-Mail-Link → neues Passwort.
 
 ---
 

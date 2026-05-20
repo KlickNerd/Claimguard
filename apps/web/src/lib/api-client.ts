@@ -105,6 +105,29 @@ export class AnalysisError extends Error {
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+// Build the request headers for every API call. If the user is logged
+// in we attach the Supabase access token so the backend can resolve
+// the request to ``CurrentUser`` once endpoints flip on auth gating
+// (PROJ-1 frontend lands first, gating commit follows).
+async function authHeaders(extra?: HeadersInit): Promise<HeadersInit> {
+  const base: Record<string, string> = { "content-type": "application/json" };
+  try {
+    // Import is lazy so this module stays usable in environments where
+    // the Supabase client isn't initialised (e.g. unit tests).
+    const { supabase } = await import("@/lib/supabase");
+    if (supabase) {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (token) base["authorization"] = `Bearer ${token}`;
+    }
+  } catch {
+    // Supabase env not configured (local dev without keys) - send the
+    // request anyway. The backend treats anonymous requests fine for
+    // endpoints that don't require auth.
+  }
+  return { ...base, ...(extra as Record<string, string> | undefined) };
+}
+
 export async function createAnalysis(
   payload: AnalysisRequest,
 ): Promise<AnalysisResponse> {
@@ -112,7 +135,7 @@ export async function createAnalysis(
   try {
     response = await fetch(`${API_BASE}/api/analyses`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: await authHeaders(),
       body: JSON.stringify({ source_type: "text", ...payload }),
     });
   } catch (err) {
@@ -153,8 +176,13 @@ export async function extractPdf(file: File): Promise<PdfExtractResponse> {
 
   let response: Response;
   try {
+    // Don't set content-type — fetch needs to fill in the multipart
+    // boundary itself. We only want the Authorization header.
+    const headers = await authHeaders();
+    const { ["content-type"]: _omit, ...rest } = headers as Record<string, string>;
     response = await fetch(`${API_BASE}/api/extract/pdf`, {
       method: "POST",
+      headers: rest,
       body: form,
     });
   } catch {
@@ -203,7 +231,7 @@ export async function smartApplyClaims(
   try {
     response = await fetch(`${API_BASE}/api/analyses/smart-apply`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: await authHeaders(),
       body: JSON.stringify({ claims, input_text: inputText }),
     });
   } catch {
@@ -235,7 +263,7 @@ export async function polishText(text: string): Promise<PolishResponse> {
   try {
     response = await fetch(`${API_BASE}/api/analyses/polish`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: await authHeaders(),
       body: JSON.stringify({ text }),
     });
   } catch {
@@ -269,7 +297,7 @@ export async function rewriteAllClaims(
   try {
     response = await fetch(`${API_BASE}/api/analyses/rewrite-batch`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: await authHeaders(),
       body: JSON.stringify({ claims, input_text: inputText }),
     });
   } catch {
@@ -301,7 +329,7 @@ export async function extractUrl(url: string): Promise<UrlExtractResponse> {
   try {
     response = await fetch(`${API_BASE}/api/extract/url`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: await authHeaders(),
       body: JSON.stringify({ url }),
     });
   } catch {

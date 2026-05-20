@@ -2,62 +2,86 @@
 
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { GoogleButton } from "@/components/auth/google-button";
+import {
+  PasswordStrength,
+  getPasswordScore,
+} from "@/components/auth/password-strength";
 import { supabase } from "@/lib/supabase";
 
-export default function LoginPage() {
+const MIN_PASSWORD_LENGTH = 12;
+const MIN_PASSWORD_SCORE = 3;
+
+export default function RegisterPage() {
   const router = useRouter();
-  const params = useSearchParams();
-  const redirectTo = params.get("redirect") ?? "/app";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const passwordScore = getPasswordScore(password);
+  const passwordOk =
+    password.length >= MIN_PASSWORD_LENGTH && passwordScore >= MIN_PASSWORD_SCORE;
+
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
-    setLoading(true);
 
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
-
-    if (signInError) {
-      // Generic message - no user enumeration via different errors for
-      // "no account" vs. "wrong password".
-      setError("E-Mail oder Passwort ungültig.");
-      setLoading(false);
+    if (!passwordOk) {
+      setError(
+        `Bitte ein Passwort mit mindestens ${MIN_PASSWORD_LENGTH} Zeichen und ausreichender Stärke wählen.`,
+      );
       return;
     }
 
-    // The middleware will pick up the new session cookie and let the
-    // /app route through; router.refresh() makes sure server components
-    // re-render with the new auth state.
-    router.push(redirectTo);
-    router.refresh();
+    setLoading(true);
+
+    const { error: signUpError, data } = await supabase.auth.signUp({
+      email: email.trim(),
+      password,
+      options: {
+        emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent("/app")}`,
+      },
+    });
+
+    setLoading(false);
+
+    if (signUpError) {
+      // Generic to prevent user enumeration — Supabase returns "User
+      // already registered" in plain text; we hide that.
+      setError(
+        "Registrierung fehlgeschlagen. Falls du bereits einen Account hast, melde dich bitte an.",
+      );
+      return;
+    }
+
+    // Supabase doesn't auto-sign-in when email-confirmation is required
+    // (which it is, per spec). Send the user to a "check your inbox"
+    // screen; the link in that mail lands at /auth/callback.
+    const verifyUrl = `/verify-email?email=${encodeURIComponent(email.trim())}`;
+    router.push(verifyUrl);
+    void data;
   }
 
   return (
     <AuthShell
-      title="Einloggen"
-      subtitle="Weiter zu deinem Workspace."
+      title="Registrieren"
+      subtitle="Erstelle in zwei Minuten deinen Workspace."
       footer={
         <>
-          Noch keinen Account?{" "}
+          Schon registriert?{" "}
           <Link
-            href="/register"
+            href="/login"
             className="text-foreground underline underline-offset-4"
           >
-            Registrieren
+            Einloggen
           </Link>
         </>
       }
@@ -80,27 +104,21 @@ export default function LoginPage() {
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between">
-            <Label htmlFor="password" className="text-xs">
-              Passwort
-            </Label>
-            <Link
-              href="/forgot-password"
-              className="text-xs text-muted-foreground hover:text-foreground"
-            >
-              Vergessen?
-            </Link>
-          </div>
+          <Label htmlFor="password" className="text-xs">
+            Passwort
+          </Label>
           <Input
             id="password"
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
+            placeholder="mindestens 12 Zeichen"
             className="h-10"
-            autoComplete="current-password"
+            autoComplete="new-password"
+            minLength={MIN_PASSWORD_LENGTH}
             required
           />
+          <PasswordStrength password={password} />
         </div>
 
         {error ? (
@@ -113,9 +131,19 @@ export default function LoginPage() {
           </div>
         ) : null}
 
-        <Button type="submit" className="w-full" disabled={loading}>
-          {loading ? "Einloggen…" : "Einloggen"}
+        <Button type="submit" className="w-full" disabled={loading || !passwordOk}>
+          {loading ? "Konto wird erstellt…" : "Konto erstellen"}
         </Button>
+
+        <p className="text-xs text-muted-foreground">
+          Mit der Registrierung akzeptierst du die{" "}
+          <Link href="/agb" className="underline underline-offset-4">AGB</Link>{" "}
+          und{" "}
+          <Link href="/datenschutz" className="underline underline-offset-4">
+            Datenschutzbestimmungen
+          </Link>
+          .
+        </p>
       </form>
 
       <div className="my-6 flex items-center gap-3 text-xs text-muted-foreground">
@@ -124,7 +152,7 @@ export default function LoginPage() {
         <div className="h-px flex-1 bg-border" />
       </div>
 
-      <GoogleButton redirectTo={redirectTo} />
+      <GoogleButton label="Mit Google registrieren" />
     </AuthShell>
   );
 }
