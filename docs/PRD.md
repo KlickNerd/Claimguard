@@ -39,7 +39,7 @@ ClaimGuard ist eine SaaS-Plattform zur automatisierten Prüfung gesundheitsbezog
 | P1 | – | URL-Crawling mit Bild-OCR (F-101) | Planned |
 | P1 | – | DOCX-Upload (F-102) | Planned |
 | P1 | – | Nährstoff-Mengen-Check (F-103) | Planned |
-| P1 | – | Team-Features / Multi-Workspace (F-104) | Planned |
+| P1 | PROJ-22 | Multi-Projekt-Workspaces + Team-Einladungen (war F-104) | Planned |
 | P1 | – | Web-Recherche nach neuen Urteilen (F-105) | Planned |
 | P2 | – | Öffentliche API (F-201) | Planned |
 | P2 | – | Batch-Analyse (F-202) | Planned |
