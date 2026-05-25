@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   ChevronsUpDown,
   ClipboardPlus,
   Clock,
+  LogOut,
   ScrollText,
   Sparkles,
   Users,
@@ -15,6 +16,15 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useAuth } from "@/lib/auth-context";
 import { WORKSPACE } from "@/lib/mock-analyses";
 
 type NavItem = {
@@ -35,6 +45,16 @@ const NAV: NavItem[] = [
 
 export function AppSidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const { user, signOut } = useAuth();
+
+  const email = user?.email ?? "";
+  const initial = (email[0] ?? "?").toUpperCase();
+
+  async function handleSignOut() {
+    await signOut();
+    router.replace("/login");
+  }
 
   return (
     <aside className="sticky top-0 flex h-screen w-[240px] shrink-0 flex-col border-r border-border/60 bg-sidebar text-sidebar-foreground">
@@ -145,6 +165,39 @@ export function AppSidebar() {
         <Button variant="ghost" size="sm" className="mt-2 w-full text-xs">
           Plan upgraden
         </Button>
+      </div>
+
+      {/* Account-Footer */}
+      <div className="border-t border-sidebar-border px-3 py-3">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-sidebar-accent"
+            >
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-[12px] font-semibold text-primary-foreground">
+                {initial}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium">
+                  {email || "Lade…"}
+                </span>
+                <span className="block text-[11px] text-muted-foreground">
+                  Account
+                </span>
+              </span>
+              <ChevronsUpDown className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" side="top" className="w-56">
+            <DropdownMenuLabel className="truncate">{email}</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={handleSignOut}>
+              <LogOut className="mr-2 h-4 w-4" aria-hidden />
+              Abmelden
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </aside>
   );

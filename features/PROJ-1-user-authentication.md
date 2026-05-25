@@ -105,7 +105,7 @@
 1. `.env.local` mit `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY` befüllen.
 2. `pnpm dev:web` starten.
 3. Auf `/register` einen Account anlegen → landet auf `/verify-email` → Klick auf den Link in der E-Mail → landet auf `/app`.
-4. Logout (via `useAuth().signOut()` — UI-Button kommt in einem späteren Commit) → wieder auf `/login`.
+4. Logout über das Account-Dropdown unten in der App-Sidebar → wieder auf `/login`. Der Trigger ruft `useAuth().signOut()` auf und navigiert via `router.replace("/login")` weiter.
 5. `/forgot-password` flow durchspielen → reset über E-Mail-Link → neues Passwort.
 
 ---
