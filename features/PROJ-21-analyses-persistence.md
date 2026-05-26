@@ -223,6 +223,16 @@ Die Migration kann gleichzeitig mit der PROJ-1-Migration (profiles + Trigger) ge
 - **Zwei JSONB-Spalten vs. ein `result`-Feld?** → **zwei Spalten**, weil konsistent zum Pydantic-Schema und besser für gezielte Indexe.
 - **Timezone?** → **UTC** in der DB, Frontend rendert lokal.
 
+### Erweiterung durch PROJ-22 (Multi-Projekt-Workspaces)
+
+Dieses Design bleibt vollständig in Kraft. PROJ-22 fügt einen einzigen Zusatz hinzu:
+
+- Spalte **`project_id`** auf `analyses` (FK auf neue Tabelle `projects`, `NOT NULL` nach Migration). Eine Analyse gehört damit zu genau einem Projekt; der bestehende `user_id`-Foreign-Key bleibt für Audit/Author-Tracking erhalten.
+- Der Index `(user_id, created_at DESC) WHERE deleted_at IS NULL` wird ersetzt durch `(project_id, created_at DESC) WHERE deleted_at IS NULL` — die History-Liste filtert primär nach Projekt, nicht nach User.
+- Die RLS-Policy erweitert sich: SELECT erlaubt, wenn der User Mitglied des `project_id` ist (vorher: wenn er der `user_id` ist). Schreibrechte abhängig von der Rolle (Editor oder Owner). PROJ-22 dokumentiert die exakten Policies.
+
+**Wichtig:** Die zwei Migrations-Sequenzen (PROJ-21 + PROJ-22) werden zu **einer** zusammengeführt. Es entsteht kein Zwischenzustand, in dem `analyses.project_id` `NULL` ist. Siehe PROJ-22 → „Migration / Datenbank-Änderungen" für die finale neun-stufige Reihenfolge.
+
 ## QA Test Results
 _To be added by /qa_
 
