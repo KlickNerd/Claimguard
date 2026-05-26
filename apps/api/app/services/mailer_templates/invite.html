@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <title>Einladung zu ClaimGuard</title>
+  </head>
+  <body style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:#f8fafc;margin:0;padding:32px;">
+    <div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:32px;">
+      <h1 style="font-size:20px;margin:0 0 16px;color:#0f172a;">
+        Einladung zum Projekt „{{ project_name }}“
+      </h1>
+
+      <p style="font-size:15px;line-height:1.6;color:#334155;margin:0 0 16px;">
+        <strong>{{ inviter_name }}</strong> hat dich eingeladen, dem ClaimGuard-Projekt
+        <strong>„{{ project_name }}“</strong> als <strong>{{ role }}</strong> beizutreten.
+      </p>
+
+      <p style="font-size:15px;line-height:1.6;color:#334155;margin:0 0 24px;">
+        Klicke auf den Button, um die Einladung anzunehmen. Falls du noch keinen ClaimGuard-Account
+        hast, kannst du dich beim selben Klick mit dieser E-Mail-Adresse registrieren.
+      </p>
+
+      <p style="margin:0 0 24px;">
+        <a href="{{ invite_url }}"
+           style="display:inline-block;background:#4f46e5;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">
+          Einladung annehmen
+        </a>
+      </p>
+
+      <p style="font-size:13px;line-height:1.6;color:#64748b;margin:0 0 8px;">
+        Oder kopiere diesen Link in deinen Browser:
+      </p>
+      <p style="font-size:13px;line-height:1.6;color:#475569;margin:0 0 24px;word-break:break-all;">
+        {{ invite_url }}
+      </p>
+
+      <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0;" />
+
+      <p style="font-size:12px;line-height:1.5;color:#94a3b8;margin:0;">
+        Diese Einladung läuft in sieben Tagen ab. Wenn du nicht weißt, worum es geht oder
+        die E-Mail nicht erwartet hast, ignoriere sie einfach — es passiert nichts.
+      </p>
+    </div>
+  </body>
+</html>

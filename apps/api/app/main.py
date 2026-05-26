@@ -8,6 +8,9 @@ from fastapi.responses import JSONResponse
 
 from app.api.analyses import router as analyses_router
 from app.api.extract import router as extract_router
+from app.api.invites import router as invites_router
+from app.api.me import router as me_router
+from app.api.projects import router as projects_router
 from app.api.prompts import router as prompts_router
 from app.api.rewrites import router as rewrites_router
 from app.config import settings
@@ -53,6 +56,9 @@ app.include_router(prompts_router)
 app.include_router(analyses_router)
 app.include_router(extract_router)
 app.include_router(rewrites_router)
+app.include_router(projects_router)
+app.include_router(invites_router)
+app.include_router(me_router)
 
 
 @app.exception_handler(RequestValidationError)

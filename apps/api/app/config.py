@@ -26,6 +26,18 @@ class Settings(BaseSettings):
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
 
+    # Resend (Transactional E-Mails — PROJ-22 Invites, future plan mails).
+    # Empty key disables sending - calls are logged + skipped instead of
+    # raising, which keeps local/test runs from needing Resend creds.
+    resend_api_key: str = ""
+    mail_from_address: str = "noreply@claim-guard.de"
+    mail_from_name: str = "ClaimGuard"
+
+    # Public URL where the user-facing app lives, used to assemble
+    # invite links. In dev it's localhost; in prod the deploy-compose
+    # sets it to the canonical domain.
+    public_app_url: str = "http://localhost:3000"
+
     cors_origins: list[str] = ["http://localhost:3000"]
 
 

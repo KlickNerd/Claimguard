@@ -1,8 +1,18 @@
 # PROJ-21: Analyses-Persistierung
 
-## Status: Planned
+## Status: In Progress
 **Created:** 2026-05-11
-**Last Updated:** 2026-05-11
+**Last Updated:** 2026-05-25
+
+## Backend Implementation Notes (2026-05-25)
+
+Implementiert als gekoppeltes Paar mit PROJ-22 — siehe dort für die ausführlichen Notes. Was hier geschah:
+
+- **Persistierung** läuft als optionaler letzter Schritt im bestehenden `POST /api/analyses`-Handler ([apps/api/app/api/analyses.py](../apps/api/app/api/analyses.py)). Anonyme (demo) Runs werden weiterhin nicht persistiert — Membership wird verlangt, sonst 403.
+- **Service** `services/analysis_storage.py` kapselt alle DB-Operationen (persist/get/list/delete/restore). Funktionen schlucken Exceptions und returnen `None`/`False`, damit ein DB-Ausfall den Pipeline-Output nicht blockiert.
+- **Endpoints** `GET /api/analyses`, `GET /api/analyses/{id}`, `DELETE /api/analyses/{id}`, `POST /api/analyses/{id}/restore` — alle mit Membership-/Rollen-Check.
+- **RLS-Policies** auf `analyses` wurden gegenüber dem ursprünglichen Spec erweitert: SELECT prüft Mitgliedschaft im Projekt (statt nur `user_id = auth.uid()`), INSERT/UPDATE/DELETE verlangen Editor- oder Owner-Rolle.
+- **pg_cron-Job** `purge_soft_deleted_analyses` läuft täglich um 03:15 UTC und löscht Zeilen mit `deleted_at < now() - 30 days` physisch.
 
 ## Dependencies
 - Requires: PROJ-1 (User Authentication) — `analyses.user_id` braucht `auth.uid()` für RLS und Ownership

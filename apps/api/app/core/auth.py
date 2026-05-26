@@ -147,3 +147,117 @@ def require_profile(
             },
         )
     return current_user
+
+
+# ---------- PROJ-22 membership helpers -----------------------------------
+
+from uuid import UUID  # noqa: E402
+
+from app.schemas.project import Role  # noqa: E402
+
+
+_PROJECT_FORBIDDEN = HTTPException(
+    status_code=status.HTTP_403_FORBIDDEN,
+    detail={
+        "code": "project_forbidden",
+        "message": "Du bist kein Mitglied dieses Projekts.",
+    },
+)
+
+
+def _fetch_membership(project_id: UUID, user_id: UUID) -> str | None:
+    """Return the user's role in the project or ``None`` if not a member."""
+    try:
+        supabase = get_supabase()
+        result = (
+            supabase.table("project_members")
+            .select("role")
+            .eq("project_id", str(project_id))
+            .eq("user_id", str(user_id))
+            .maybe_single()
+            .execute()
+        )
+    except Exception as exc:
+        logger.warning("membership lookup failed: %s", exc)
+        return None
+    data = getattr(result, "data", None)
+    if not data:
+        return None
+    return data.get("role")
+
+
+def list_member_project_ids(user_id: UUID) -> list[UUID]:
+    """All project_ids the user is a member of."""
+    try:
+        supabase = get_supabase()
+        result = (
+            supabase.table("project_members")
+            .select("project_id")
+            .eq("user_id", str(user_id))
+            .execute()
+        )
+    except Exception as exc:
+        logger.warning("list_member_project_ids failed: %s", exc)
+        return []
+    rows = getattr(result, "data", None) or []
+    return [UUID(row["project_id"]) for row in rows]
+
+
+def require_member(project_id: UUID, current_user: CurrentUser) -> str:
+    """Raise 403 unless the user is a member of ``project_id``.
+
+    Returns the user's role for downstream role-gating without a second
+    query.
+    """
+    role = _fetch_membership(project_id, current_user.id)
+    if role is None:
+        raise _PROJECT_FORBIDDEN
+    return role
+
+
+def require_role(
+    project_id: UUID,
+    current_user: CurrentUser,
+    *,
+    allowed: tuple[Role, ...],
+) -> str:
+    """Stricter than :func:`require_member` - role must be in ``allowed``."""
+    role = require_member(project_id, current_user)
+    if role not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "project_forbidden",
+                "message": "Deine Rolle erlaubt diese Aktion nicht.",
+            },
+        )
+    return role
+
+
+async def get_active_project_id(
+    x_active_project_id: Annotated[str | None, Header()] = None,
+) -> UUID | None:
+    """Parse the ``X-Active-Project-Id`` header, if present and valid."""
+    if not x_active_project_id:
+        return None
+    try:
+        return UUID(x_active_project_id)
+    except (ValueError, AttributeError):
+        return None
+
+
+async def get_optional_user(
+    authorization: Annotated[str | None, Header()] = None,
+) -> CurrentUser | None:
+    """Like ``get_current_user`` but returns ``None`` for anonymous calls.
+
+    Used by endpoints that work for both demo (Landing-Widget) and
+    authenticated app traffic - e.g. ``POST /api/analyses`` runs the
+    pipeline either way and only persists when a user is present.
+    """
+    if not authorization:
+        return None
+    try:
+        return await get_current_user(authorization=authorization)
+    except HTTPException:
+        return None

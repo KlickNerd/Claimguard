@@ -1,8 +1,30 @@
 # PROJ-22: Multi-Projekt-Workspaces mit Team-Einladungen
 
-## Status: Architected
+## Status: In Progress
 **Created:** 2026-05-25
 **Last Updated:** 2026-05-25
+
+## Backend Implementation Notes (2026-05-25)
+
+Backend für PROJ-21 + PROJ-22 wurde gekoppelt ausgerollt. Was gebaut wurde:
+
+- **Migration `20260525_0002_projects_and_analyses.sql`** — neun Schritte exakt nach dem Tech Design, inkl. erweiterter `handle_new_user`-Trigger (legt zusätzlich Default-Projekt + Owner-Membership an + setzt `profiles.active_project_id`), pg_cron-Jobs für Soft-Delete-Purge + Invite-Cleanup, RLS auf allen vier neuen Tabellen.
+- **Pydantic-Schemas** — `app/schemas/project.py` (Project, Member, Invite, Public-Invite, Limits-Konstanten) + Erweiterung von `app/schemas/analysis.py` (StoredAnalysis, AnalysisListItem, project_id in AnalysisRequest/Response).
+- **Service-Layer** — `services/analysis_storage.py` (Persist/Get/List/Delete/Restore), `services/project_repo.py` (Projects + Members + Invites + active-project), `services/mailer.py` (Resend HTTP-API ohne SDK) + Jinja2-Template `mailer_templates/invite.html`.
+- **Auth-Erweiterungen** — `require_member`, `require_role`, `get_active_project_id` (Header), `get_optional_user` in `core/auth.py`.
+- **API-Routen** — `api/analyses.py` erweitert um GET/LIST/DELETE/RESTORE + Project-Scoping im POST; neue Router `api/projects.py` (CRUD + Members + Invites mit Limits + Rate-Limit), `api/invites.py` (öffentlicher Token-Lookup + Accept mit Email-Match), `api/me.py` (active-project).
+- **Config** — `RESEND_API_KEY`, `MAIL_FROM_*`, `PUBLIC_APP_URL` in `app/config.py`; alle Router in `main.py` registriert.
+- **Tests** — 24 pytests, 100 % grün: Membership-Helpers, Projects-Endpoints (CRUD, Limits, Last-Owner-Schutz, Default-Projekt-Schutz, Rate-Limit), Invite-Acceptance (4 Pfade inkl. Mismatch + Expired + Revoked + Idempotent).
+
+**Bewusste Vereinfachungen:**
+- Resend wird via direktem httpx-POST angesprochen statt SDK — eine HTTP-Datei weniger, keine extra Lib.
+- `_lookup_emails` im `project_repo` nutzt `auth.admin.list_users()` (bei MVP-Member-Anzahlen unkritisch). Wenn die Liste >100 Mitglieder erreicht, sollte das in einen Batch-Get-By-Id-Loop umgestellt werden.
+- Bestandsdaten-Migration (Schritt 6 der SQL-Migration) ist idempotent — bei Greenfield-Deploy ein No-Op, bei nachträglichem Roll-out korrekt.
+
+**Was bewusst NICHT angefasst wurde:**
+- Frontend (Switcher, Member-Page, /invite/[token]) kommt im nächsten `/frontend`-Lauf.
+- React-Email-Template-Migration ist V1.1.
+- Mock-Workspace-Daten in `apps/web/src/lib/mock-analyses.ts` werden vom Frontend-Skill ersetzt.
 
 ## Dependencies
 - **Hard-Requires: PROJ-21 (Analyses-Persistierung)** — die `analyses`-Tabelle ist die Tabelle, an die `project_id` als FK hängt. Ohne persistierte Analysen gibt es nichts „in ein Projekt zu legen". PROJ-22 muss daher denselben Migrationsschritt mitnehmen oder direkt nach PROJ-21 deployen.
