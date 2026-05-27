@@ -6,8 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from app.schemas.claim import DetectedClaim, EvaluatedClaim
-from app.schemas.final_audit import FinalAuditResult
+from app.schemas.final_audit import AuditFinding, FinalAuditResult
 from app.services.anthropic_client import AnthropicServiceError
+from app.services.audit_apply_service import AuditApplyService
 from app.services.claim_detector import ClaimDetector
 from app.services.final_audit_service import FinalAuditService
 from app.services.polish_service import PolishService
@@ -215,3 +216,90 @@ async def final_audit(
             detail={"code": "anthropic_unavailable", "message": str(exc)},
         ) from exc
     return result
+
+
+class ApplyAuditRequest(BaseModel):
+    text: str = Field(
+        description=(
+            "Marketing text to be rewritten. Usually the polished/"
+            "smart-apply output that was just audited."
+        ),
+        min_length=10,
+    )
+    findings: list[AuditFinding] = Field(
+        description=(
+            "Findings from the previous final-audit run. The LLM will "
+            "iterate them and apply each fix to the text."
+        ),
+    )
+
+
+class ApplyAuditResponse(BaseModel):
+    rewritten_text: str = Field(
+        description="Marketing text with all audit findings applied.",
+    )
+    findings_applied: int = Field(
+        ge=0,
+        description=(
+            "Number of findings the LLM was asked to apply. The model "
+            "addresses every entry in the input list - the count is "
+            "echoed for the frontend's progress banner."
+        ),
+    )
+
+
+def get_audit_apply_service() -> AuditApplyService:
+    return AuditApplyService()
+
+
+@router.post(
+    "/apply-audit",
+    response_model=ApplyAuditResponse,
+)
+async def apply_audit(
+    payload: ApplyAuditRequest,
+    service: AuditApplyService = Depends(get_audit_apply_service),
+) -> ApplyAuditResponse:
+    """One-shot apply of all audit findings to the text.
+
+    Sonnet rewrites the whole document, addressing each finding in
+    place and preserving everything else. Used by the "Audit-Befunde
+    komplett umsetzen lassen"-button in the frontend when the user
+    doesn't want to splice findings one by one.
+
+    Hard cap of 480 s under Caddy's 600 s proxy timeout. The post-call
+    sperrliste guard ensures the rewrite never silently leaks HWG /
+    wellbeing vocabulary into the user's marketing copy.
+    """
+    if not payload.findings:
+        # Nothing to apply - echo the text back. Avoids a wasted Sonnet
+        # call when the audit reported zero findings (shippable text).
+        return ApplyAuditResponse(rewritten_text=payload.text, findings_applied=0)
+    try:
+        rewritten, applied = await asyncio.wait_for(
+            asyncio.to_thread(
+                service.apply, text=payload.text, findings=payload.findings,
+            ),
+            timeout=480.0,
+        )
+    except TimeoutError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "apply_audit_timeout",
+                "message": (
+                    "Die Übernahme der Audit-Befunde hat das Zeitlimit von "
+                    "8 Minuten überschritten. Wende die Findings über die "
+                    "Übernehmen-Buttons einzeln an oder teile den Text "
+                    "vorab in kleinere Abschnitte."
+                ),
+            },
+        ) from exc
+    except AnthropicServiceError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "anthropic_unavailable", "message": str(exc)},
+        ) from exc
+    return ApplyAuditResponse(
+        rewritten_text=rewritten, findings_applied=applied,
+    )

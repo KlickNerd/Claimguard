@@ -318,6 +318,49 @@ export type FinalAuditResult = {
   latency_ms: number;
 };
 
+export type ApplyAuditResponse = {
+  rewritten_text: string;
+  findings_applied: number;
+};
+
+export async function applyAuditFindings(
+  text: string,
+  findings: AuditFinding[],
+): Promise<ApplyAuditResponse> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}/api/analyses/apply-audit`, {
+      method: "POST",
+      headers: await authHeaders(),
+      body: JSON.stringify({ text, findings }),
+    });
+  } catch {
+    throw new AnalysisError(
+      `Die ClaimGuard-API unter ${API_BASE} antwortet nicht.`,
+      "api_unreachable",
+      0,
+    );
+  }
+  if (!response.ok) {
+    let code = "apply_audit_failed";
+    let message = `Übernahme der Audit-Befunde fehlgeschlagen (HTTP ${response.status}).`;
+    try {
+      const body = await response.json();
+      const detail = body?.detail ?? body;
+      if (detail?.code) code = detail.code;
+      if (detail?.message) message = detail.message;
+    } catch {
+      // keep defaults
+    }
+    throw new AnalysisError(message, code, response.status);
+  }
+  const data = (await response.json()) as ApplyAuditResponse;
+  return {
+    rewritten_text: data.rewritten_text ?? "",
+    findings_applied: data.findings_applied ?? 0,
+  };
+}
+
 export async function runFinalAudit(
   text: string,
   options: { reformulatedFromOriginal?: boolean } = {},

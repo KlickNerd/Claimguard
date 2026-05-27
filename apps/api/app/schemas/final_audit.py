@@ -59,21 +59,21 @@ class AuditFinding(BaseModel):
     )
     location_quote: str = Field(
         description=(
-            "Verbatim quote from the audited text (15-80 chars). The "
-            "frontend uses this to scroll to the finding."
+            "Verbatim quote from the audited text. The frontend uses "
+            "this to scroll to the finding."
         ),
-        min_length=3,
-        max_length=240,
+        min_length=1,
+        max_length=400,
     )
     finding: str = Field(
         description="1-3 sentence German description of what is wrong.",
-        min_length=10,
-        max_length=1200,
+        min_length=1,
+        max_length=2000,
     )
     recommendation: str = Field(
         description="1-2 sentence German recommendation for the fix.",
-        min_length=5,
-        max_length=600,
+        min_length=1,
+        max_length=1000,
     )
     replacement: str | None = Field(
         default=None,

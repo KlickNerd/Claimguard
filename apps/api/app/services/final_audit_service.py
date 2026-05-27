@@ -101,12 +101,16 @@ _FINAL_AUDIT_TOOL: dict[str, Any] = {
                             "description": "1-2 sentence German recommendation.",
                         },
                         "replacement": {
-                            "type": ["string", "null"],
+                            "type": "string",
                             "description": (
-                                "Concrete fix text. Empty string means "
-                                "delete the location_quote. Null means "
-                                "the finding cannot be applied as a "
-                                "single search-and-replace edit."
+                                "Concrete fix text that exactly replaces "
+                                "location_quote when the user clicks "
+                                "'Übernehmen'. Empty string means delete "
+                                "the location_quote ersatzlos. Omit the "
+                                "field entirely when the finding cannot "
+                                "be applied as a single search-and-"
+                                "replace edit (e.g. 'restructure this "
+                                "whole section')."
                             ),
                         },
                     },
@@ -116,7 +120,6 @@ _FINAL_AUDIT_TOOL: dict[str, Any] = {
                         "location_quote",
                         "finding",
                         "recommendation",
-                        "replacement",
                     ],
                 },
             },
@@ -232,12 +235,39 @@ class FinalAuditService:
 
         findings_raw: list[dict[str, Any]] = list(tool_input.get("findings") or [])
         findings: list[AuditFinding] = []
+        dropped = 0
         for raw in findings_raw:
             try:
                 findings.append(AuditFinding.model_validate(raw))
             except (TypeError, ValueError) as exc:
-                logger.warning("Dropping malformed audit finding: %s; raw=%r", exc, raw)
+                dropped += 1
+                logger.warning(
+                    "Dropping malformed audit finding: %s; raw=%r", exc, raw,
+                )
                 continue
+        # Customer-debug 2026-05-27: cases where the executive summary
+        # mentioned findings but the list was empty turned out to be
+        # caused by all findings failing Pydantic validation silently.
+        # Log a structured trace whenever the parsed list ends up empty
+        # despite the LLM saying there are issues, so we can spot the
+        # next schema drift quickly.
+        if not findings and findings_raw:
+            logger.warning(
+                "final_audit: all %d findings dropped during parse; raw keys "
+                "first item=%r",
+                len(findings_raw),
+                list(findings_raw[0].keys()) if findings_raw else [],
+            )
+        if not findings_raw and (
+            tool_input.get("overall_assessment") or ""
+        ).strip():
+            logger.info(
+                "final_audit: LLM returned 0 findings but non-empty "
+                "overall_assessment - assistant may have summarised "
+                "findings in prose without populating the list. Raw "
+                "tool_input keys=%s",
+                sorted(tool_input.keys()),
+            )
 
         # The LLM is told to sort by severity, but we re-sort defensively
         # in case the response drifted. Critical/high first.

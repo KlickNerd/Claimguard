@@ -36,6 +36,12 @@ type Props = {
   // Set of finding indices that have already been applied. Renders
   // those as "Übernommen" with a strikethrough on the location quote.
   appliedFindings?: Set<number>;
+  // Trigger the "one-shot LLM rewrite" of the entire text per audit
+  // findings. Distinct from the deterministic per-finding apply: this
+  // is a single Sonnet call that returns a fully rewritten text.
+  onApplyAllByLLM?: () => void;
+  isApplyingAllByLLM?: boolean;
+  applyAllByLLMError?: string | null;
 };
 
 const SEVERITY_TONE: Record<AuditSeverity, { bg: string; fg: string; label: string }> = {
@@ -88,6 +94,9 @@ export function FinalAuditPanel({
   onApplyFinding,
   onApplyAllCriticalHigh,
   appliedFindings,
+  onApplyAllByLLM,
+  isApplyingAllByLLM,
+  applyAllByLLMError,
 }: Props) {
   // Empty initial state - render the "trigger" card so the user knows
   // the audit exists.
@@ -256,18 +265,54 @@ export function FinalAuditPanel({
                 </>
               ) : null}
             </div>
-            {applicableUrgent > 0 && onApplyAllCriticalHigh && (
+            {result.findings.length > 0 && onApplyAllByLLM && (
               <div className="mt-3">
                 <Button
                   type="button"
                   size="sm"
                   variant="default"
-                  onClick={onApplyAllCriticalHigh}
+                  onClick={onApplyAllByLLM}
+                  disabled={isApplyingAllByLLM}
+                  className="bg-primary"
                 >
-                  <Wand2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                  {applicableUrgent} kritische/hohe Findings auf einmal
-                  übernehmen
+                  {isApplyingAllByLLM ? (
+                    <>
+                      <Loader2
+                        className="mr-1.5 h-3.5 w-3.5 animate-spin"
+                        aria-hidden
+                      />
+                      Claude wendet alle Befunde an …
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                      Audit-Befunde komplett umsetzen lassen
+                    </>
+                  )}
                 </Button>
+                {applyAllByLLMError ? (
+                  <p className="mt-1.5 text-[11px] text-status-forbidden">
+                    {applyAllByLLMError}
+                  </p>
+                ) : null}
+                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                  Sonnet 4.6 überarbeitet den Text in einem Durchgang
+                  basierend auf allen oben aufgelisteten Findings.
+                </p>
+              </div>
+            )}
+
+            {applicableUrgent > 0 && onApplyAllCriticalHigh && (
+              <div className="mt-2">
+                <button
+                  type="button"
+                  onClick={onApplyAllCriticalHigh}
+                  className="inline-flex items-center gap-1 rounded text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <Check className="h-3 w-3" aria-hidden />
+                  Stattdessen nur die {applicableUrgent} kritischen/hohen
+                  Findings deterministisch übernehmen
+                </button>
               </div>
             )}
           </div>

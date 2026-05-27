@@ -44,6 +44,7 @@ import { KPIS } from "@/lib/mock-analyses";
 import { DEMO_INPUT } from "@/lib/demo-data";
 import {
   AnalysisError,
+  applyAuditFindings,
   createAnalysis,
   isDeleteMarker,
   polishText,
@@ -177,6 +178,9 @@ export default function AppHomePage() {
   const [appliedAuditFindings, setAppliedAuditFindings] = useState<Set<number>>(
     new Set(),
   );
+  // "One-shot LLM rewrite all findings"-button state.
+  const [isApplyingAuditByLLM, setIsApplyingAuditByLLM] = useState(false);
+  const [applyAuditByLLMError, setApplyAuditByLLMError] = useState<string | null>(null);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(
@@ -326,6 +330,44 @@ export default function AppHomePage() {
     }
     setPolishedText(next);
     setAppliedAuditFindings((prev) => new Set(prev).add(index));
+  };
+
+  /** "Audit-Befunde komplett umsetzen lassen": one LLM call (Sonnet)
+   *  that rewrites the whole text addressing every finding. Distinct
+   *  from the deterministic per-finding splice — handles findings
+   *  without a clean replacement (e.g. "restructure this section"),
+   *  and produces one coherent rewrite instead of N independent
+   *  splices that might leave gaps. */
+  const applyAllAuditByLLM = async () => {
+    if (!finalAuditResult || isApplyingAuditByLLM) return;
+    if (finalAuditResult.findings.length === 0) return;
+    const baseText = polishedText ?? result?.input_text ?? "";
+    if (!baseText) return;
+    setIsApplyingAuditByLLM(true);
+    setApplyAuditByLLMError(null);
+    try {
+      const out = await applyAuditFindings(baseText, finalAuditResult.findings);
+      if (out.rewritten_text && out.rewritten_text.trim()) {
+        setPolishedText(out.rewritten_text);
+        setPolishSummary(
+          `${out.findings_applied} Audit-Befunde von Claude umgesetzt.`,
+        );
+        // Treat every finding as applied - the rewrite covered them.
+        setAppliedAuditFindings(
+          new Set(finalAuditResult.findings.map((_, i) => i)),
+        );
+      }
+    } catch (err) {
+      if (err instanceof AnalysisError) {
+        setApplyAuditByLLMError(err.message);
+      } else if (err instanceof Error) {
+        setApplyAuditByLLMError(err.message);
+      } else {
+        setApplyAuditByLLMError("Übernahme der Audit-Befunde fehlgeschlagen.");
+      }
+    } finally {
+      setIsApplyingAuditByLLM(false);
+    }
   };
 
   /** One-click "fix everything that's actionable + urgent". Iterates
@@ -846,6 +888,9 @@ export default function AppHomePage() {
                   appliedAuditFindings={appliedAuditFindings}
                   onApplyAuditFinding={applyAuditFinding}
                   onApplyAllUrgentAudit={applyAllUrgentAuditFindings}
+                  onApplyAllAuditByLLM={() => void applyAllAuditByLLM()}
+                  isApplyingAuditByLLM={isApplyingAuditByLLM}
+                  applyAuditByLLMError={applyAuditByLLMError}
                 />
               )}
             </div>
@@ -995,6 +1040,9 @@ function DoneState({
   appliedAuditFindings,
   onApplyAuditFinding,
   onApplyAllUrgentAudit,
+  onApplyAllAuditByLLM,
+  isApplyingAuditByLLM,
+  applyAuditByLLMError,
 }: {
   result: AnalysisResponse;
   counts: {
@@ -1029,6 +1077,9 @@ function DoneState({
   appliedAuditFindings: Set<number>;
   onApplyAuditFinding: (index: number) => void;
   onApplyAllUrgentAudit: () => void;
+  onApplyAllAuditByLLM: () => void;
+  isApplyingAuditByLLM: boolean;
+  applyAuditByLLMError: string | null;
 }) {
   const detectedNotEvaluated = result.detected_claims.filter(
     (d) => !result.evaluated_claims.some((e) => e.id === d.id),
@@ -1318,6 +1369,9 @@ function DoneState({
         onApplyFinding={onApplyAuditFinding}
         onApplyAllCriticalHigh={onApplyAllUrgentAudit}
         appliedFindings={appliedAuditFindings}
+        onApplyAllByLLM={onApplyAllAuditByLLM}
+        isApplyingAllByLLM={isApplyingAuditByLLM}
+        applyAllByLLMError={applyAuditByLLMError}
       />
     </div>
   );
