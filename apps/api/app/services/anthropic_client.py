@@ -91,6 +91,7 @@ def create_message_with_tool(
     tool: dict[str, Any],
     max_tokens: int = 4096,
     cache_system: bool = False,
+    timeout: float | None = None,
 ) -> tuple[dict[str, Any], int, int]:
     """Force a tool call and return ``(tool_input, input_tokens, output_tokens)``.
 
@@ -103,8 +104,23 @@ def create_message_with_tool(
     normal input rate on every subsequent call that re-reads the same
     prompt - which is exactly what happens when we evaluate N claims of
     the same analysis with the same HCVO system prompt.
+
+    ``timeout`` lets a single call override the client-level 60 s cap -
+    used by the final-audit service which legitimately needs ~2-3 min on
+    big pillar pages. The tenacity retry wrapper is still active, so a
+    transient 5xx/429 still kicks off a fresh attempt within that
+    budget.
     """
     client = get_anthropic_client()
+    if timeout is not None:
+        # Per-call override: with_options returns a shallow copy of the
+        # client with the new timeout applied. We DON'T disable the
+        # SDK's internal retries here - if Anthropic hands us a 502 or
+        # 529 in the middle of a 3-minute call we still want one
+        # automatic retry rather than failing the user.
+        call_client = client.with_options(timeout=timeout)
+    else:
+        call_client = client
 
     system_param: str | list[dict[str, Any]]
     if cache_system and system:
@@ -119,7 +135,7 @@ def create_message_with_tool(
         system_param = system or ""
 
     try:
-        response = client.messages.create(
+        response = call_client.messages.create(
             model=model,
             max_tokens=max_tokens,
             system=system_param,

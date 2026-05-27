@@ -126,14 +126,28 @@ class _ToolCaller(Protocol):
         tool: dict[str, Any],
         max_tokens: int = ...,
         cache_system: bool = ...,
+        timeout: float | None = ...,
     ) -> tuple[dict[str, Any], int, int]: ...
 
 
-class FinalAuditService:
-    """Single Opus-pass holistic review.
+# Per-call SDK timeout for the final audit. The default Anthropic client
+# is configured for 60 s (good for parallel detection/evaluation where
+# we don't want one slow call to block ``asyncio.gather``); a single
+# Sonnet 4.6 audit over a 30 k-char pillar page legitimately needs 90-
+# 180 s. We give 240 s to leave a buffer under the FastAPI 480 s and
+# Caddy 600 s caps. With the SDK's internal 2x retries on 5xx, the
+# worst-case real time is bounded at ~480 s.
+_AUDIT_SDK_TIMEOUT_S = 240.0
 
-    Default model is the configured evaluator model (Opus 4.7); callers
-    can pass a cheaper model in tests via the ``model`` constructor arg.
+
+class FinalAuditService:
+    """Single-pass holistic review.
+
+    Default model is Sonnet 4.6 (fast, high-quality enough for the
+    structural audit checklist). Opus 4.7 would also work but adds ~2x
+    latency on long inputs without a meaningful quality bump on the
+    audit checklist - the rationale matches ADR-0007's "Sonnet by
+    default, Opus as opt-in" stance.
     """
 
     def __init__(
@@ -145,7 +159,10 @@ class FinalAuditService:
     ) -> None:
         self._loader = prompt_loader or get_prompt_loader()
         self._call = tool_caller or create_message_with_tool
-        self._model = model or settings.anthropic_model_evaluation
+        # Use the detection model (Sonnet 4.6 by default) over the
+        # evaluation model so a future Opus-eval override doesn't drag
+        # the audit into 5+ minute territory by accident.
+        self._model = model or settings.anthropic_model_detection
 
     def audit(
         self,
@@ -183,15 +200,16 @@ class FinalAuditService:
                 model=self._model,
                 system=None,
                 user_content=rendered.rendered,
-                # Opus 4.7 output speed sits around ~30-40 tok/s for
-                # structured tool calls. 4k tokens = ~2 minutes of
-                # generation, which keeps us comfortably below Caddy's
-                # 10-minute proxy timeout even on 30k-char pillar pages
-                # with prompt caching warm. 4k is also plenty for ~25
-                # findings of ~150 tokens each plus the executive
-                # summary - we cap at 25 findings in the prompt anyway.
+                # Sonnet 4.6 output speed ~60-80 tok/s for structured
+                # tool calls. 4k tokens = ~60-90 s of generation, well
+                # under our SDK timeout. 4k is plenty for the 25-finding
+                # cap from the prompt (max ~150 tokens per finding).
                 tool=_FINAL_AUDIT_TOOL,
                 max_tokens=4000,
+                # Override the client-default 60 s per-call timeout so
+                # the SDK doesn't bail mid-generation on big pillar
+                # pages and trigger a tenacity retry storm.
+                timeout=_AUDIT_SDK_TIMEOUT_S,
             )
         except AnthropicServiceError as exc:
             logger.warning("Final audit Anthropic-side failure: %s", exc)
