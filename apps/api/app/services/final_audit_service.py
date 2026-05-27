@@ -183,11 +183,15 @@ class FinalAuditService:
                 model=self._model,
                 system=None,
                 user_content=rendered.rendered,
-                # Long final-audit responses can carry 20+ findings of
-                # ~120 tokens each plus the overall_assessment. 8k
-                # leaves plenty of room without truncating mid-tool-call.
+                # Opus 4.7 output speed sits around ~30-40 tok/s for
+                # structured tool calls. 4k tokens = ~2 minutes of
+                # generation, which keeps us comfortably below Caddy's
+                # 10-minute proxy timeout even on 30k-char pillar pages
+                # with prompt caching warm. 4k is also plenty for ~25
+                # findings of ~150 tokens each plus the executive
+                # summary - we cap at 25 findings in the prompt anyway.
                 tool=_FINAL_AUDIT_TOOL,
-                max_tokens=8000,
+                max_tokens=4000,
             )
         except AnthropicServiceError as exc:
             logger.warning("Final audit Anthropic-side failure: %s", exc)

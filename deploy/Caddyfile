@@ -37,9 +37,13 @@
 		reverse_proxy api:8000 {
 			# Long-running LLM calls; default 60 s timeouts choke our
 			# evaluation + smart-apply requests on big pillar pages.
+			# Opus-4.7-based final-audit on a 30k-char pillar page can
+			# legitimately run 4-6 minutes, so we go to 10 min here.
+			# FastAPI itself enforces a tighter 480 s per-request cap
+			# (with a clean 503 fallback) before this kicks in.
 			transport http {
-				read_timeout 300s
-				write_timeout 300s
+				read_timeout 600s
+				write_timeout 600s
 			}
 		}
 	}

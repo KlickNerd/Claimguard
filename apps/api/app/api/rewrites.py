@@ -182,13 +182,33 @@ async def final_audit(
     UWG §5/§6 risks, HWG vocabulary, and implicit health claims induced
     by surrounding context. Read-only - the user decides which findings
     to act on.
+
+    Hard cap of 480 s per request (under Caddy's 600 s proxy timeout)
+    so the client always gets a structured 503 with a clear message
+    instead of a bare 504 Gateway Timeout from the reverse proxy.
     """
     try:
-        result = await asyncio.to_thread(
-            service.audit,
-            text=payload.text,
-            reformulated_from_original=payload.reformulated_from_original,
+        result = await asyncio.wait_for(
+            asyncio.to_thread(
+                service.audit,
+                text=payload.text,
+                reformulated_from_original=payload.reformulated_from_original,
+            ),
+            timeout=480.0,
         )
+    except TimeoutError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "final_audit_timeout",
+                "message": (
+                    "Der finale Compliance-Check hat das Zeitlimit von 8 "
+                    "Minuten überschritten. Bei sehr langen Texten kann "
+                    "es helfen, ihn in zwei Abschnitte zu teilen und "
+                    "jeden separat zu prüfen."
+                ),
+            },
+        ) from exc
     except AnthropicServiceError as exc:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
