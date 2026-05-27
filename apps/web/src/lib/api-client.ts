@@ -300,6 +300,11 @@ export type AuditFinding = {
   location_quote: string;
   finding: string;
   recommendation: string;
+  // Concrete, machine-applicable fix text. The frontend can splice
+  // this into the document on "Übernehmen". null means the finding
+  // is not a single-shot text edit (e.g. "restructure this section").
+  // Empty string means "delete the location_quote".
+  replacement: string | null;
 };
 
 export type FinalAuditResult = {

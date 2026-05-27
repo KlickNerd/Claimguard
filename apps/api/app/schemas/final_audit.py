@@ -49,7 +49,8 @@ class AuditFinding(BaseModel):
     ``location_quote`` is the verbatim text snippet (15-80 chars) so the
     frontend can highlight it without recomputing positions. ``finding``
     is the human-readable problem statement, ``recommendation`` is what
-    the user should do about it.
+    the user should do about it, ``replacement`` is the concrete fix
+    text that the frontend can splice into the document on "Übernehmen".
     """
 
     severity: AuditSeverity = Field(description="Risk level for this finding.")
@@ -73,6 +74,18 @@ class AuditFinding(BaseModel):
         description="1-2 sentence German recommendation for the fix.",
         min_length=5,
         max_length=600,
+    )
+    replacement: str | None = Field(
+        default=None,
+        description=(
+            "Concrete fix text. If set, the frontend can replace "
+            "``location_quote`` in the document with this string in "
+            "one click. Empty string means 'delete the location_quote'. "
+            "Null means the finding is not a single-shot text edit "
+            "(e.g. 'restructure this entire section') and must be "
+            "handled manually."
+        ),
+        max_length=2000,
     )
 
 

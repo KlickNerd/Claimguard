@@ -100,6 +100,15 @@ _FINAL_AUDIT_TOOL: dict[str, Any] = {
                             "type": "string",
                             "description": "1-2 sentence German recommendation.",
                         },
+                        "replacement": {
+                            "type": ["string", "null"],
+                            "description": (
+                                "Concrete fix text. Empty string means "
+                                "delete the location_quote. Null means "
+                                "the finding cannot be applied as a "
+                                "single search-and-replace edit."
+                            ),
+                        },
                     },
                     "required": [
                         "severity",
@@ -107,6 +116,7 @@ _FINAL_AUDIT_TOOL: dict[str, Any] = {
                         "location_quote",
                         "finding",
                         "recommendation",
+                        "replacement",
                     ],
                 },
             },

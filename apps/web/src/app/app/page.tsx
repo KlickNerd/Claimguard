@@ -171,6 +171,12 @@ export default function AppHomePage() {
   const [finalAuditResult, setFinalAuditResult] = useState<FinalAuditResult | null>(null);
   const [isAuditing, setIsAuditing] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
+  // Indices into ``finalAuditResult.findings`` that the user already
+  // applied via the panel's "Übernehmen"-button. Reset when a new audit
+  // runs or the polish is reverted.
+  const [appliedAuditFindings, setAppliedAuditFindings] = useState<Set<number>>(
+    new Set(),
+  );
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(
@@ -246,6 +252,7 @@ export default function AppHomePage() {
     setSmartApplyResidual([]);
     setFinalAuditResult(null);
     setAuditError(null);
+    setAppliedAuditFindings(new Set());
   };
 
   /** Run Sonnet over the rewritten text to fix grammar / transitions
@@ -284,6 +291,77 @@ export default function AppHomePage() {
     setSmartApplyResidual([]);
     setFinalAuditResult(null);
     setAuditError(null);
+    setAppliedAuditFindings(new Set());
+  };
+
+  /** Apply a single audit finding's ``replacement`` to the current body
+   *  text. Splices the replacement in for the first occurrence of
+   *  ``location_quote``. Empty replacement = delete + tidy whitespace.
+   *  No-ops if the finding is already applied or has no replacement. */
+  const applyAuditFinding = (index: number) => {
+    if (!finalAuditResult) return;
+    if (appliedAuditFindings.has(index)) return;
+    const finding = finalAuditResult.findings[index];
+    if (!finding || typeof finding.replacement !== "string") return;
+    const baseText = polishedText ?? result?.input_text ?? "";
+    if (!baseText) return;
+    const idx = baseText.indexOf(finding.location_quote);
+    if (idx < 0) {
+      // Quote not in the current text - probably because an earlier
+      // apply changed the surrounding context. Mark the finding as
+      // applied anyway so the user can move on; they'll see the
+      // strike-through and know it's not actionable on this version.
+      setAppliedAuditFindings((prev) => new Set(prev).add(index));
+      return;
+    }
+    const before = baseText.slice(0, idx);
+    const after = baseText.slice(idx + finding.location_quote.length);
+    let next = before + finding.replacement + after;
+    // Clean up double-spaces + orphan punctuation introduced by an
+    // empty replacement (= delete).
+    if (finding.replacement === "") {
+      next = next.replace(/  +/g, " ").replace(/\s+([.,;:!?])/g, "$1");
+      // Two empty paragraphs collapsing into three newlines -> two.
+      next = next.replace(/\n{3,}/g, "\n\n");
+    }
+    setPolishedText(next);
+    setAppliedAuditFindings((prev) => new Set(prev).add(index));
+  };
+
+  /** One-click "fix everything that's actionable + urgent". Iterates
+   *  critical + high findings in order, applying each replacement to
+   *  the running text. Lower-severity findings stay in the panel for
+   *  manual review. */
+  const applyAllUrgentAuditFindings = () => {
+    if (!finalAuditResult) return;
+    const baseText = polishedText ?? result?.input_text ?? "";
+    if (!baseText) return;
+    let working = baseText;
+    const newlyApplied = new Set(appliedAuditFindings);
+    finalAuditResult.findings.forEach((finding, index) => {
+      if (newlyApplied.has(index)) return;
+      if (finding.severity !== "critical" && finding.severity !== "high") return;
+      if (typeof finding.replacement !== "string") return;
+      const idx = working.indexOf(finding.location_quote);
+      if (idx < 0) {
+        // Earlier apply changed the surrounding context. Mark it
+        // applied so it disappears from the actionable list.
+        newlyApplied.add(index);
+        return;
+      }
+      const before = working.slice(0, idx);
+      const after = working.slice(idx + finding.location_quote.length);
+      working = before + finding.replacement + after;
+      if (finding.replacement === "") {
+        working = working
+          .replace(/  +/g, " ")
+          .replace(/\s+([.,;:!?])/g, "$1")
+          .replace(/\n{3,}/g, "\n\n");
+      }
+      newlyApplied.add(index);
+    });
+    setPolishedText(working);
+    setAppliedAuditFindings(newlyApplied);
   };
 
   /** Trigger the holistic Opus-4.7 compliance audit over the *current*
@@ -302,6 +380,9 @@ export default function AppHomePage() {
         reformulatedFromOriginal: polishedText !== null,
       });
       setFinalAuditResult(audit);
+      // Fresh audit -> fresh applied-set. Old applies are no longer
+      // meaningful because the finding indices change.
+      setAppliedAuditFindings(new Set());
     } catch (err) {
       if (err instanceof AnalysisError) {
         setAuditError(err.message);
@@ -760,7 +841,11 @@ export default function AppHomePage() {
                   onResetAudit={() => {
                     setFinalAuditResult(null);
                     setAuditError(null);
+                    setAppliedAuditFindings(new Set());
                   }}
+                  appliedAuditFindings={appliedAuditFindings}
+                  onApplyAuditFinding={applyAuditFinding}
+                  onApplyAllUrgentAudit={applyAllUrgentAuditFindings}
                 />
               )}
             </div>
@@ -907,6 +992,9 @@ function DoneState({
   auditError,
   onRunAudit,
   onResetAudit,
+  appliedAuditFindings,
+  onApplyAuditFinding,
+  onApplyAllUrgentAudit,
 }: {
   result: AnalysisResponse;
   counts: {
@@ -938,6 +1026,9 @@ function DoneState({
   auditError: string | null;
   onRunAudit: () => void;
   onResetAudit: () => void;
+  appliedAuditFindings: Set<number>;
+  onApplyAuditFinding: (index: number) => void;
+  onApplyAllUrgentAudit: () => void;
 }) {
   const detectedNotEvaluated = result.detected_claims.filter(
     (d) => !result.evaluated_claims.some((e) => e.id === d.id),
@@ -1224,6 +1315,9 @@ function DoneState({
         error={auditError}
         onRun={onRunAudit}
         onReset={onResetAudit}
+        onApplyFinding={onApplyAuditFinding}
+        onApplyAllCriticalHigh={onApplyAllUrgentAudit}
+        appliedFindings={appliedAuditFindings}
       />
     </div>
   );

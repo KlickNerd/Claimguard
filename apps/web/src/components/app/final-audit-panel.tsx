@@ -1,6 +1,15 @@
 "use client";
 
-import { AlertCircle, AlertTriangle, CheckCircle2, Loader2, ShieldCheck, Sparkles } from "lucide-react";
+import {
+  AlertCircle,
+  AlertTriangle,
+  Check,
+  CheckCircle2,
+  Loader2,
+  ShieldCheck,
+  Sparkles,
+  Wand2,
+} from "lucide-react";
 
 import type {
   AuditCategory,
@@ -17,6 +26,16 @@ type Props = {
   error: string | null;
   onRun: () => void;
   onReset?: () => void;
+  // Apply a single finding's replacement to the current text. The
+  // index identifies the finding in result.findings.
+  onApplyFinding?: (index: number) => void;
+  // Apply all findings that have a non-null replacement and a severity
+  // of "critical" or "high". Default behavior is "fix the urgent stuff
+  // in one click, leave low/medium for review".
+  onApplyAllCriticalHigh?: () => void;
+  // Set of finding indices that have already been applied. Renders
+  // those as "Übernommen" with a strikethrough on the location quote.
+  appliedFindings?: Set<number>;
 };
 
 const SEVERITY_TONE: Record<AuditSeverity, { bg: string; fg: string; label: string }> = {
@@ -66,6 +85,9 @@ export function FinalAuditPanel({
   error,
   onRun,
   onReset,
+  onApplyFinding,
+  onApplyAllCriticalHigh,
+  appliedFindings,
 }: Props) {
   // Empty initial state - render the "trigger" card so the user knows
   // the audit exists.
@@ -144,15 +166,35 @@ export function FinalAuditPanel({
 
   if (!result) return null;
 
-  const findingsBySeverity = result.findings.reduce<
-    Record<AuditSeverity, AuditFinding[]>
+  // Track findings by their *original* index in result.findings, so the
+  // per-finding apply-handler hits the right one even after severity
+  // grouping. We keep an "indexed" list inline so the inner map can
+  // emit `originalIndex` cleanly.
+  type IndexedFinding = { finding: AuditFinding; originalIndex: number };
+  const indexed: IndexedFinding[] = result.findings.map((finding, i) => ({
+    finding,
+    originalIndex: i,
+  }));
+
+  const findingsBySeverity = indexed.reduce<
+    Record<AuditSeverity, IndexedFinding[]>
   >(
-    (acc, f) => {
-      acc[f.severity].push(f);
+    (acc, item) => {
+      acc[item.finding.severity].push(item);
       return acc;
     },
     { critical: [], high: [], medium: [], low: [] },
   );
+
+  // Count: how many critical+high findings still have an applicable
+  // replacement and haven't been applied yet. Drives the "Alle
+  // anwenden"-button visibility.
+  const applicableUrgent = indexed.filter(
+    ({ finding, originalIndex }) =>
+      (finding.severity === "critical" || finding.severity === "high") &&
+      typeof finding.replacement === "string" &&
+      !appliedFindings?.has(originalIndex),
+  ).length;
 
   return (
     <div className="space-y-3">
@@ -214,6 +256,20 @@ export function FinalAuditPanel({
                 </>
               ) : null}
             </div>
+            {applicableUrgent > 0 && onApplyAllCriticalHigh && (
+              <div className="mt-3">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="default"
+                  onClick={onApplyAllCriticalHigh}
+                >
+                  <Wand2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                  {applicableUrgent} kritische/hohe Findings auf einmal
+                  übernehmen
+                </Button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -239,8 +295,17 @@ export function FinalAuditPanel({
                   {items.length} {items.length === 1 ? "Finding" : "Findings"}
                 </span>
               </div>
-              {items.map((f, idx) => (
-                <FindingCard key={`${sev}-${idx}`} finding={f} />
+              {items.map(({ finding, originalIndex }) => (
+                <FindingCard
+                  key={`${sev}-${originalIndex}`}
+                  finding={finding}
+                  isApplied={appliedFindings?.has(originalIndex) ?? false}
+                  onApply={
+                    onApplyFinding
+                      ? () => onApplyFinding(originalIndex)
+                      : undefined
+                  }
+                />
               ))}
             </div>
           );
@@ -250,25 +315,69 @@ export function FinalAuditPanel({
   );
 }
 
-function FindingCard({ finding }: { finding: AuditFinding }) {
+function FindingCard({
+  finding,
+  isApplied,
+  onApply,
+}: {
+  finding: AuditFinding;
+  isApplied: boolean;
+  onApply?: () => void;
+}) {
   const tone = SEVERITY_TONE[finding.severity];
+  const canApply = !isApplied && typeof finding.replacement === "string";
+  const willDelete = finding.replacement === "";
   return (
-    <div className="rounded-xl border border-border/70 bg-card p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <span
-          className={cn(
-            "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium",
-            tone.bg,
-            tone.fg,
+    <div
+      className={cn(
+        "rounded-xl border border-border/70 bg-card p-4",
+        isApplied && "border-status-allowed/50 bg-status-allowed-bg/30",
+      )}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className={cn(
+              "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium",
+              tone.bg,
+              tone.fg,
+            )}
+          >
+            {tone.label}
+          </span>
+          <span className="text-[11px] font-medium text-muted-foreground">
+            {CATEGORY_LABELS[finding.category]}
+          </span>
+          {isApplied && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-status-allowed-bg px-2 py-0.5 text-[10px] font-medium text-status-allowed">
+              <Check className="h-2.5 w-2.5" aria-hidden />
+              Übernommen
+            </span>
           )}
-        >
-          {tone.label}
-        </span>
-        <span className="text-[11px] font-medium text-muted-foreground">
-          {CATEGORY_LABELS[finding.category]}
-        </span>
+        </div>
+        {canApply && onApply ? (
+          <button
+            type="button"
+            onClick={onApply}
+            className="inline-flex items-center gap-1 rounded bg-primary px-2 py-1 text-[11px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+          >
+            {willDelete ? (
+              <>Streichen</>
+            ) : (
+              <>
+                <Check className="h-3 w-3" aria-hidden />
+                Übernehmen
+              </>
+            )}
+          </button>
+        ) : null}
       </div>
-      <blockquote className="mt-2 rounded-md bg-muted/40 px-3 py-2 text-xs italic text-foreground/80">
+      <blockquote
+        className={cn(
+          "mt-2 rounded-md bg-muted/40 px-3 py-2 text-xs italic text-foreground/80",
+          isApplied && "line-through opacity-60",
+        )}
+      >
         „{finding.location_quote}"
       </blockquote>
       <p className="mt-2.5 text-sm leading-relaxed text-foreground/90">
@@ -282,6 +391,24 @@ function FindingCard({ finding }: { finding: AuditFinding }) {
           {finding.recommendation}
         </p>
       </div>
+      {typeof finding.replacement === "string" && finding.replacement !== "" && (
+        <div className="mt-2 rounded-md border border-status-allowed/30 bg-status-allowed-bg/30 px-3 py-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-status-allowed">
+            Konkreter Ersetzungs-Text
+          </div>
+          <p className="mt-0.5 whitespace-pre-wrap text-xs leading-relaxed text-foreground/90">
+            {finding.replacement}
+          </p>
+        </div>
+      )}
+      {finding.replacement === null && (
+        <div className="mt-2 rounded-md border border-status-borderline/30 bg-status-borderline-bg/30 px-3 py-2">
+          <p className="text-xs leading-relaxed text-foreground/75">
+            Diese Stelle muss manuell überarbeitet werden — kein
+            automatischer Ersetzungs-Vorschlag verfügbar.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
