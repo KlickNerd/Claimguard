@@ -54,17 +54,28 @@ _REWRITE_TOOL: dict[str, Any] = {
             "rewrite": {
                 "type": "string",
                 "description": (
-                    "German rewrite of the claim. Must itself be a "
-                    "compliant claim - no disease references, no "
-                    "unauthorised wordings. If a clean rewrite is not "
-                    "possible, return a neutral product description "
-                    "instead (e.g. ingredient name + sensory note)."
+                    "German rewrite of the claim. Must itself be compliant: "
+                    "no disease references, no unauthorised wordings, no "
+                    "wellbeing/Vitalität phrases. If a clean compliant "
+                    "rewrite is not possible WITHOUT losing the original "
+                    "topic, return exactly the literal token ``[DELETE]`` "
+                    "(no quotes, no surrounding text). The pipeline will "
+                    "then strike the claim from the marketing copy. A "
+                    "generic fallback like 'X ist ein traditionell "
+                    "verwendetes Pflanzenpräparat' is NEVER acceptable - "
+                    "use [DELETE] instead."
                 ),
             },
         },
         "required": ["rewrite"],
     },
 }
+
+
+# Sentinel emitted by the LLM when no compliant rewrite is possible.
+# Surfaces to the frontend as a 'drop this sentence' suggestion - never
+# inlined as actual marketing copy.
+DELETE_MARKER = "[DELETE]"
 
 
 _SPERRLISTE_BLOCK = sperrliste_block_for_prompt()
@@ -102,6 +113,17 @@ Inhaltliche Vorgaben:
 4. **Keine neuen Inhalte hinzufügen**, die im umgebenden Kontext schon
    stehen (z. B. nicht erneut die Pflanzen-/Pilzliste wiederholen, wenn
    der Satz davor sie bereits aufzählt).
+5. **Anti-Drift**: Der Original-Claim hat ein klares Thema (z. B.
+   Schilddrüse, Schlaf, Stress, Baldrian-Vergleich). Deine Reformulierung
+   **muss dasselbe Thema** behalten. Wenn der Original-Satz von Schilddrüse
+   spricht, MUSS deine Reformulierung weiterhin Schilddrüse nennen
+   (z. B. „Bei Schilddrüsenerkrankungen Arzt fragen"). Generische
+   Pflanzen-/Traditions-Floskeln, die das Thema verlieren, sind verboten.
+6. **Wenn (4)+(5)+Compliance nicht gleichzeitig erreichbar sind**: gib
+   exakt den Token ``[DELETE]`` zurück (sonst nichts). Das Tool wird den
+   Original-Satz dann ersatzlos aus dem Marketing-Text streichen. Lieber
+   sauber löschen als einen sinnlosen Boilerplate-Satz schreiben, der
+   den Kontext zerstört.
 
 Stil-Vorgaben (klingt der Output wie ein Mensch?):
 * **Werbe-Ton bewahren**: keine bürokratische Stapelei aus
@@ -239,6 +261,11 @@ class RewriteService:
         if rewrite is None:
             return str(claim.id), None
 
+        # Explicit "no compliant rewrite possible" - surface verbatim,
+        # skip forbidden-term guard (which doesn't apply to the sentinel).
+        if rewrite == DELETE_MARKER:
+            return str(claim.id), DELETE_MARKER
+
         # Deterministic post-write guard: if the LLM smuggled in any
         # forbidden vocabulary (HWG terms or wellbeing patterns), retry
         # once with an explicit "you used these, do it again without".
@@ -265,6 +292,8 @@ class RewriteService:
             rewrite = self._invoke_llm(claim, base_params, retry_warning=retry_warning)
             if rewrite is None:
                 return str(claim.id), None
+            if rewrite == DELETE_MARKER:
+                return str(claim.id), DELETE_MARKER
             still_forbidden = find_forbidden_terms(rewrite)
             if still_forbidden:
                 logger.warning(
@@ -307,8 +336,15 @@ class RewriteService:
             logger.warning("Unexpected rewrite error for %s: %s", claim.id, exc)
             return None
 
-        rewrite = str(tool_input.get("rewrite") or "").strip()
-        rewrite = _aggressive_clean(rewrite)
+        rewrite_raw = str(tool_input.get("rewrite") or "").strip()
+        # Recognise the explicit "no compliant rewrite possible" sentinel
+        # before the placeholder sanitiser. The LLM is instructed (and the
+        # tool description repeats) to emit exactly [DELETE] when no
+        # compliant variant exists - we surface that verbatim so the
+        # frontend can render it as "Satz löschen empfohlen".
+        if rewrite_raw.strip().upper() == DELETE_MARKER:
+            return DELETE_MARKER
+        rewrite = _aggressive_clean(rewrite_raw)
         rewrite = _strip_wrapping_quotes(rewrite)
         rewrite = _match_terminal_punct(rewrite, claim.claim_text)
         if _looks_like_template_placeholder(rewrite):

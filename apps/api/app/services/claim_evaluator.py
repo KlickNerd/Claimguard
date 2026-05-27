@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import Any, Literal, Protocol
 
@@ -199,10 +200,17 @@ class ClaimEvaluator:
         full_text: str,
         evidence: list[RetrievalHit],
     ) -> tuple[EvaluatedClaim | None, int, int]:
-        # Hard rule before spending an LLM call: disease-based claims are
-        # never legal for foods (Art. 7 LMIV, § 12 LFGB). Saves cost + avoids
-        # rare LLM mis-classifications on the highest-risk category.
-        if claim.claim_type == "disease_based":
+        # Cost-saving shortcut for disease-based claims that contain
+        # explicit disease-action language (heilt, lindert, vorbeugt, …).
+        # Customer feedback 2026-05-27 showed the old "any disease_based
+        # claim = forbidden"-shortcut killed table cells like "Schilddrüse"
+        # or "Autoimmunerkrankungen", which are organ/condition names used
+        # in NEUTRAL safety hints - not disease claims. The LLM evaluator
+        # must judge those with full context; only an unambiguous action
+        # verb still triggers the bypass.
+        if claim.claim_type == "disease_based" and _is_obvious_disease_action(
+            claim.claim_text,
+        ):
             return self._disease_shortcut(claim, evidence), 0, 0
 
         if self._mode == "full":
@@ -552,3 +560,38 @@ def _coerce_reasoning(value: Any) -> str:
     return text or (
         "Die Bewertung konnte nicht vollständig validiert werden - bitte den Claim manuell prüfen."
     )
+
+
+# Explicit disease-action language. Only these patterns warrant the
+# zero-LLM "forbidden / high" shortcut - everything else is too
+# context-sensitive (e.g. a bare organ word in a safety hint) and must
+# go through the LLM evaluator.
+_DISEASE_ACTION_RE = re.compile(
+    r"\b("
+    r"heil(?:t|en|te[nst]?|end[a-zäöüß]*)|"
+    r"linder(?:t|n|te[nst]?|nd[a-zäöüß]*|ung[a-zäöüß]*)|"
+    r"vorbeug[a-zäöüß]*|"
+    r"beug(?:t|en|te[nst]?)\b[^.!?\n]{0,60}\bvor\b|"
+    r"kurier(?:t|en|te[nst]?)|"
+    r"behandel(?:t|n|te[nst]?)|"
+    r"verhinder(?:t|n|te[nst]?)|"
+    r"hilft\s+(?:bei|gegen)|"
+    r"wirkt\s+(?:gegen|bei)|"
+    r"reduzier(?:t|en|te[nst]?)\s+(?:das\s+)?risiko|"
+    r"schütz(?:t|en|te[nst]?)\s+vor"
+    r")\b",
+    flags=re.IGNORECASE | re.UNICODE,
+)
+
+
+def _is_obvious_disease_action(claim_text: str) -> bool:
+    """True when the claim text contains explicit disease-action language.
+
+    The disease-shortcut only fires for these patterns. Bare nouns like
+    "Schilddrüse", "Autoimmunerkrankungen", "Leberfunktion" are NOT
+    treated as auto-forbidden - they need the LLM evaluator to read the
+    surrounding sentence (safety hint vs. wirkversprechen).
+    """
+    if not claim_text:
+        return False
+    return bool(_DISEASE_ACTION_RE.search(claim_text))

@@ -93,6 +93,14 @@ eingebaut, nicht angeflanscht.
 
 ## Was du behältst (NICHT antasten)
 
+0. **Keine inhaltlichen Ergänzungen**. Polish ist Sprach-Korrektur,
+   nicht Marketing. Wenn der Eingabe-Text **Lücken** hat (weil
+   vorgelagerte Schritte einen problematischen Satz entfernt haben),
+   schließe nur den **Übergang** zwischen den umliegenden Sätzen
+   sprachlich. **Erfinde keine neuen Sätze**, um die Lücke zu füllen -
+   auch nicht "harmlose" Marketing-/Traditions-/Botanical-Floskeln.
+   Wenn ein Absatz nach dem Streichen nur noch einen Satz hat, ist
+   das richtig - nicht "zu kurz".
 1. **Markdown-Struktur**: Headlines (`#`, `##`, `###`), Listen
    (`*`, `1.`), **fett**, _kursiv_, Tabellen, Blockquotes, Links.
 2. **Exakte EU-Register-Formulierungen wortgetreu**, also Phrasen vom

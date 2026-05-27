@@ -8,14 +8,16 @@ import {
   Leaf,
   RotateCcw,
   Scale,
+  Scissors,
   Wand2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type {
-  EvaluatedClaim,
-  EvaluationStatus,
-  RetrievalHit,
-  RetrievalSourceType,
+import {
+  isDeleteMarker,
+  type EvaluatedClaim,
+  type EvaluationStatus,
+  type RetrievalHit,
+  type RetrievalSourceType,
 } from "@/lib/api-client";
 import { StatusPill } from "@/components/site/status-pill";
 
@@ -121,7 +123,35 @@ export function EvaluatedClaimCard({
         <LegalHintsSection hints={claim.legal_hints} />
       )}
 
-      {claim.rewrite_suggestion && (
+      {claim.rewrite_suggestion && isDeleteMarker(claim.rewrite_suggestion) && (
+        <div
+          className={cn(
+            "mt-3 rounded-md border-l-2 p-3",
+            isApplied
+              ? "border-status-allowed/60 bg-status-allowed-bg/60"
+              : "border-status-forbidden/60 bg-status-forbidden-bg/30",
+          )}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-status-forbidden">
+              <Scissors className="h-3 w-3" aria-hidden />
+              {isApplied ? "Gestrichen" : "Streichen empfohlen"}
+            </div>
+            <div className="flex items-center gap-2">
+              {!isApplied && onApply && <ApplyButton onClick={onApply} label="Streichen" />}
+              {isApplied && onRevert && <RevertButton onClick={onRevert} />}
+            </div>
+          </div>
+          <p className="mt-1.5 text-sm leading-relaxed text-foreground/85">
+            Für diese Aussage ist keine HCVO-konforme Reformulierung möglich,
+            ohne den Sinn zu verfehlen. Beim Streichen wird der Satz
+            ersatzlos aus dem Marketing-Text entfernt — die umliegenden
+            Sätze bleiben unverändert.
+          </p>
+        </div>
+      )}
+
+      {claim.rewrite_suggestion && !isDeleteMarker(claim.rewrite_suggestion) && (
         <div
           className={cn(
             "mt-3 rounded-md p-3",
@@ -177,7 +207,13 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function ApplyButton({ onClick }: { onClick: () => void }) {
+function ApplyButton({
+  onClick,
+  label = "Anwenden",
+}: {
+  onClick: () => void;
+  label?: string;
+}) {
   return (
     <button
       type="button"
@@ -188,7 +224,7 @@ function ApplyButton({ onClick }: { onClick: () => void }) {
       className="inline-flex items-center gap-1 rounded bg-primary px-2 py-1 text-[11px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
     >
       <Check className="h-3 w-3" aria-hidden />
-      Anwenden
+      {label}
     </button>
   );
 }

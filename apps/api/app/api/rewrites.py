@@ -5,8 +5,11 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from app.schemas.claim import EvaluatedClaim
+from app.schemas.claim import DetectedClaim, EvaluatedClaim
+from app.schemas.final_audit import FinalAuditResult
 from app.services.anthropic_client import AnthropicServiceError
+from app.services.claim_detector import ClaimDetector
+from app.services.final_audit_service import FinalAuditService
 from app.services.polish_service import PolishService
 from app.services.rewrite_service import RewriteService
 from app.services.smart_apply_service import SmartApplyService
@@ -92,10 +95,29 @@ class SmartApplyRequest(BaseModel):
 
 class SmartApplyResponse(BaseModel):
     rewritten_text: str
+    residual_claims: list[DetectedClaim] = Field(
+        default_factory=list,
+        description=(
+            "Claims still detected after the auto-rewrite (convergence "
+            "check). Empty list = rewrite converged; non-empty = further "
+            "manual review needed."
+        ),
+    )
+    convergence_warning: str | None = Field(
+        default=None,
+        description=(
+            "Human-readable warning if the convergence check itself "
+            "failed (e.g. Anthropic outage during the re-detection). "
+            "Null when the check succeeded, regardless of result."
+        ),
+    )
 
 
 def get_smart_apply_service() -> SmartApplyService:
-    return SmartApplyService()
+    # Wire a ClaimDetector for the convergence check so the user sees
+    # immediately whether the rewrite still leaks claims. Construction
+    # is cheap (no model load), so we instantiate per-request.
+    return SmartApplyService(detector=ClaimDetector())
 
 
 @router.post(
@@ -107,7 +129,7 @@ async def smart_apply(
     service: SmartApplyService = Depends(get_smart_apply_service),
 ) -> SmartApplyResponse:
     try:
-        rewritten = await service.smart_apply(
+        result = await service.smart_apply(
             input_text=payload.input_text,
             evaluated_claims=payload.claims,
         )
@@ -116,4 +138,60 @@ async def smart_apply(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "anthropic_unavailable", "message": str(exc)},
         ) from exc
-    return SmartApplyResponse(rewritten_text=rewritten)
+    return SmartApplyResponse(
+        rewritten_text=result.rewritten_text,
+        residual_claims=result.residual_claims,
+        convergence_warning=result.convergence_warning,
+    )
+
+
+class FinalAuditRequest(BaseModel):
+    text: str = Field(
+        description=(
+            "Marketing text to audit holistically. Usually the smart-"
+            "apply output, but works on any input."
+        ),
+        min_length=10,
+    )
+    reformulated_from_original: bool = Field(
+        default=False,
+        description=(
+            "True if the text just came out of smart-apply. Triggers an "
+            "extra prompt note that nudges the auditor toward typical "
+            "post-rewrite failure modes (broken tables, boilerplate)."
+        ),
+    )
+
+
+def get_final_audit_service() -> FinalAuditService:
+    return FinalAuditService()
+
+
+@router.post(
+    "/final-audit",
+    response_model=FinalAuditResult,
+)
+async def final_audit(
+    payload: FinalAuditRequest,
+    service: FinalAuditService = Depends(get_final_audit_service),
+) -> FinalAuditResult:
+    """Single-call holistic compliance review with Opus 4.7.
+
+    Catches what the per-claim pipeline misses: broken Markdown tables,
+    topic drift in FAQ answers, duplicate paragraphs, factual errors,
+    UWG §5/§6 risks, HWG vocabulary, and implicit health claims induced
+    by surrounding context. Read-only - the user decides which findings
+    to act on.
+    """
+    try:
+        result = await asyncio.to_thread(
+            service.audit,
+            text=payload.text,
+            reformulated_from_original=payload.reformulated_from_original,
+        )
+    except AnthropicServiceError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "anthropic_unavailable", "message": str(exc)},
+        ) from exc
+    return result

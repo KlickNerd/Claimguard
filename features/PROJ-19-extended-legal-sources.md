@@ -2,7 +2,7 @@
 
 ## Status: In Progress
 **Created:** 2026-05-01
-**Last Updated:** 2026-05-27
+**Last Updated:** 2026-05-27 (B)
 **Backlog-Referenz:** ergibt sich aus PROJ-10-System-Prompt-Anforderungen + Nutzer-Feedback
 
 ## Dependencies
@@ -220,3 +220,105 @@ eigener Testfall fixiert.
 - Keine UI-Differenzierung HCVO vs. HWG im Frontend — die Treffer
   laufen unter dem bestehenden Card-Schema, mit `disease_based` bzw.
   `wellbeing_based` als Claim-Type. UI-Polish ist V1.1.
+
+## Update 2026-05-27 (B) — Reformulation-Pipeline gegen Boilerplate-Müll + Final Audit
+
+**Trigger:** Zweiter Kundendurchlauf nach (A) zeigte: die Reformulation
+zerstörte Tabellen-Zellen, brach FAQ-Antworten thematisch auf
+(„Baldrian"-FAQ ohne Baldrian-Antwort) und produzierte generische
+Botanical-Floskeln, die bei der Re-Detection wieder als implizite
+Claims auftauchten — 43 neue Claims auf einem bereits umgeschriebenen
+Text. Außerdem zerlegte die `disease_shortcut`-Regel im Evaluator
+neutrale Sicherheits-Header („Schilddrüse", „Autoimmunerkrankungen",
+„Leberfunktion") in „Unzulässig: Hoch"-Verdikte ohne Kontextprüfung.
+
+**Was umgesetzt ist:**
+
+- **`disease_shortcut` kontext-aware** ([claim_evaluator.py](../apps/api/app/services/claim_evaluator.py)):
+  feuert nur noch bei expliziter Krankheits-Aktions-Sprache (`heilt`,
+  `lindert`, `vorbeugt`, `beugt … vor`, `kuriert`, `behandelt`,
+  `hilft bei/gegen`, `reduziert das Risiko`, `schützt vor`). Bare
+  Organ-/Krankheitsnomen gehen jetzt durch die LLM-Evaluation, die
+  Tabellen-Header von Wirkversprechen unterscheiden kann.
+- **`[DELETE]` / `[DROP_ROW]`-Marker** in [rewrite_service.py](../apps/api/app/services/rewrite_service.py)
+  und [smart_apply_service.py](../apps/api/app/services/smart_apply_service.py):
+  Das LLM darf — und soll — explizit Streichen statt fabulieren. In
+  Markdown-Tabellenzeilen entfernt `[DROP_ROW]` die gesamte Zeile
+  (Header inkl.), in Fließtext zieht `[DELETE]` nur den Satz. Die
+  Tabellen-Erkennung läuft heuristisch über `^\s*\|.*\|\s*$`-Zeilen.
+- **Anti-Drift im Reformulation-Prompt**: explizite Regel, dass das
+  Original-Thema (Schilddrüse, Baldrian, Stress, …) im Output erhalten
+  bleiben **muss**. Generische Boilerplate-Sätze sind verboten — wenn
+  keine themen-treue Reformulierung möglich ist, wird gestrichen.
+- **Tabellen-Header-Kontext im SmartApply-Prompt**: wenn ein Absatz
+  als Markdown-Tabellenzeile erkannt wird, bekommt das LLM einen
+  zusätzlichen Hinweis-Block, der die linke Spalte als Header
+  identifiziert und thematische Treue zur rechten Spalte einfordert.
+- **Konvergenz-Check in SmartApply** ([smart_apply_service.py:SmartApplyResult](../apps/api/app/services/smart_apply_service.py)):
+  nach dem Rewrite läuft Detection nochmal über den umgeschriebenen
+  Text. `residual_claims` listet alle Claims, die noch übrig sind —
+  Frontend kann „Nochmal manuell prüfen"-Banner zeigen.
+- **Polish härter** ([polish_service.py](../apps/api/app/services/polish_service.py)):
+  ausdrückliche Regel „**keine inhaltlichen Ergänzungen** — Polish
+  ist Sprach-Korrektur, nicht Marketing". Polish darf Lücken
+  übergangs-glätten, aber **nicht** mit neuen Sätzen füllen.
+- **Finaler Compliance-Audit (Opus 4.7)** — neuer Service, Prompt,
+  Schema, API-Endpoint:
+  - [final_audit_service.py](../apps/api/app/services/final_audit_service.py)
+    + [final_audit_v1.0.0.md](../apps/api/app/prompts/final_audit_v1.0.0.md)
+    + [final_audit.py](../apps/api/app/schemas/final_audit.py)
+    + `POST /api/analyses/final-audit`.
+  - Single-Pass-Opus-Call über den Gesamttext mit holistischer
+    Checkliste: kaputte Tabellen, kaputte Listen, Duplikate,
+    verwaiste Sätze, Topic-Drift, FAQ-Antwort verfehlt Frage,
+    Sachfehler, zirkulärer Inhalt, impliziter Claim durch Kontext,
+    Kontext-Krankheitsbezug, UWG §§ 5/6, HWG-Verstoß, Lazy-
+    Disclaimer.
+  - Returns strukturierte `AuditFinding`-Liste (severity +
+    category + location_quote + finding + recommendation),
+    `overall_assessment` und `shippable`-Flag. Read-only — nicht
+    autorewrite. Nutzer entscheidet welche Findings angegangen
+    werden.
+
+**Test-Regression:**
+- [test_disease_shortcut_guard.py](../apps/api/tests/test_disease_shortcut_guard.py)
+  — 18 Fälle, jeder Kunden-False-Positive als Regression fixiert
+  (Schilddrüse, Autoimmunerkrankungen, Leberfunktion, … bleibt LLM).
+- [test_smart_apply_drop_markers.py](../apps/api/tests/test_smart_apply_drop_markers.py)
+  — Tabellen-Drop-Logik (`| Schilddrüse | [DROP_ROW] |` → Zeile weg).
+
+**Bewusst nicht umgesetzt:**
+- Kein Auto-Apply der Audit-Findings — der Nutzer muss bestätigen
+  welche Stellen geändert werden. Anders wäre Kaskaden-Schaden
+  vorprogrammiert.
+- Keine HMPC-Monografie-Datenbank (für „Traditional Use Registration")
+  — der Audit-Prompt verweist auf den Begriff, aber die Verifikation
+  bleibt Nutzer-Aufgabe in V1.0.
+
+## Update 2026-05-27 (C) — Frontend-Integration
+
+- API-Client ([api-client.ts](../apps/web/src/lib/api-client.ts)) um
+  `runFinalAudit`, `SmartApplyResponse.residual_claims`,
+  `isDeleteMarker` erweitert. Vollständige TypeScript-Typen für
+  `AuditFinding`, `AuditCategory`, `AuditSeverity`, `FinalAuditResult`.
+- Neue Komponente [final-audit-panel.tsx](../apps/web/src/components/app/final-audit-panel.tsx):
+  Trigger-Karte → Loading-State → Findings-Liste mit Severity-Badges
+  (kritisch/hoch/mittel/niedrig), Kategorie-Labels, Original-Zitat,
+  Empfehlung pro Finding. Shippable-Banner oben (grün versandbereit /
+  gelb Nacharbeit nötig) mit Executive Summary.
+- App-Seite ([page.tsx](../apps/web/src/app/app/page.tsx)):
+  - SmartApply-Aufruf liest jetzt `residual_claims` und zeigt
+    Konvergenz-Warnung ("N Claims im umgeschriebenen Text noch
+    erkannt — bitte manuell prüfen").
+  - Final-Audit-Panel ist nach dem Reformulierungs-Workflow
+    eingebunden. Läuft über den polished/smart-applied Text wenn
+    vorhanden, sonst über den Original-Input.
+  - `applyRewritesToText` interpretiert `[DELETE]`-Marker als
+    "Satz ersatzlos streichen" und glättet doppelte Whitespaces /
+    verwaiste Satzzeichen anschließend.
+- EvaluatedClaimCard ([evaluated-claim-card.tsx](../apps/web/src/components/app/evaluated-claim-card.tsx))
+  hat jetzt eine eigene **„Streichen empfohlen"-Karte** mit
+  `Scissors`-Icon für Claims, deren `rewrite_suggestion == "[DELETE]"`
+  ist. Erklärt dem Nutzer, warum keine Reformulierung möglich ist
+  (Sinn-Verlust), und bietet den „Streichen"-Button statt
+  „Anwenden".

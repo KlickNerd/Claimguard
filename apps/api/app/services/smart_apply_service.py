@@ -28,11 +28,12 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from app.config import settings
-from app.schemas.claim import EvaluatedClaim
+from app.schemas.claim import DetectedClaim, EvaluatedClaim
 from app.services.anthropic_client import (
     AnthropicServiceError,
     create_message_with_tool,
 )
+from app.services.claim_detector import ClaimDetector
 from app.services.forbidden_terms import (
     find_forbidden_terms,
     forbidden_terms_summary,
@@ -77,6 +78,8 @@ eine Liste der gesundheitsbezogenen Aussagen, die in diesem Absatz
 rechtlich problematisch sind.
 
 **Anrede im Gesamttext: {addressing_form}** ({addressing_hint})
+
+{paragraph_kind_hint}
 
 ## Original-Absatz
 
@@ -123,6 +126,29 @@ umgebenden Satz.
 8. **Länge**: Roughly so lang wie das Original, eher kürzer.
 9. **Keine eigene Erklärung beifügen**, keine Meta-Kommentare. Nur
    der neu geschriebene Absatz im Tool-Call.
+10. **Thematische Treue (Anti-Drift)**: Jeder Satz im Original behandelt
+    ein konkretes Thema (Schilddrüse, Schlaf, Baldrian, Stress, …).
+    Deine Reformulierung **muss dasselbe Thema behalten**. Sicherheits-
+    hinweise wie „Bei Schilddrüsenerkrankungen Arzt fragen" sind
+    erlaubt - sie sind **kein** Wirkversprechen. Wenn die FAQ-Frage
+    Baldrian erwähnt, muss die Antwort Baldrian erwähnen.
+11. **Streichen statt fabulieren**: Wenn ein Satz nicht konform UND
+    thematisch treu reformuliert werden kann, **lass ihn ersatzlos
+    weg** und verbinde die umliegenden Sätze sinnvoll. **Niemals**
+    einen generischen Fallback-Satz einfügen (z. B. „X ist ein
+    traditionelles Pflanzenpräparat aus der ayurvedischen Tradition")
+    - das zerstört Tabellen-Zellen, FAQ-Antworten und Absatz-Logik.
+12. **Bei Tabellenzeilen** (siehe Hinweis oben): Wenn der Zelleninhalt
+    nicht konform und thematisch treu reformuliert werden kann, **gib
+    exakt die Zeichenkette** ``[DROP_ROW]`` als einzigen Inhalt zurück
+    (z. B. ``| Schilddrüse | [DROP_ROW] |``). Das Tool entfernt dann
+    die ganze Zeile, damit der Tabellen-Header (Schilddrüse) nicht
+    isoliert ohne Inhalt zurückbleibt.
+13. **Bei FAQ-Antworten**, deren Frage durch keinen konformen Inhalt
+    beantwortet werden kann: gib **nur die Frage und einen einzigen
+    Satz** zurück, der ehrlich sagt „Zu dieser Frage können wir aus
+    rechtlichen Gründen keine Aussage machen" - **nicht** mit Boiler-
+    plate über Botanicals/Tradition umgehen.
 
 ### Beispiel für die richtige Integration
 
@@ -134,8 +160,52 @@ Richtiges Vorgehen: ``Wir setzen auf eine Vitamin-D-Versorgung -
 Vitamin D trägt zu einer normalen Funktion des Immunsystems bei.``
 (EU-Wortlaut organisch eingewoben.)
 
+### Beispiel für richtige Auslassung statt Fallback
+
+Original: ``Reishi (Ganoderma lucidum) ist ein Pilz mit langer
+Tradition. Wechselwirkung mit Blutverdünnern und Immunsuppressiva
+diskutiert.``
+
+Falsches Vorgehen: ``Reishi (Ganoderma lucidum) ist ein traditionell
+verwendeter Vitalpilz, der seit Langem fester Bestandteil verschiedener
+Kulturen ist. Reishi-Präparate sind Lebensmittel und kein Ersatz für
+ärztlichen Rat.`` (Wechselwirkungs-Info verloren, Boilerplate
+eingebaut.)
+
+Richtiges Vorgehen: ``Reishi (Ganoderma lucidum) ist ein Pilz mit
+langer Tradition. Wenn du blutverdünnende oder immunsuppressive
+Medikamente nimmst, sprich vor der Einnahme mit deiner Ärztin oder
+deinem Arzt.`` (Thema Blutverdünner/Immunsuppressiva erhalten als
+neutraler Sicherheitshinweis.)
+
 Jetzt los: Schreibe den Absatz neu und rufe das Tool
 ``record_paragraph_rewrite`` mit dem Ergebnis auf."""
+
+
+_TABLE_ROW_HINT = """**Hinweis - Tabellenzeile**: Dieser Absatz ist eine
+Markdown-Tabellenzeile. Die linke Spalte ist der Header (z. B.
+„Schilddrüse"), die rechte Spalte der Inhalt. Wenn der Inhalt nicht
+konform UND thematisch zum Header passend formuliert werden kann, gib
+für die rechte Spalte ``[DROP_ROW]`` zurück, damit die ganze Zeile
+entfernt wird. Ein generischer Inhalt wie „Pflanze aus ayurvedischer
+Tradition" passt nicht zum Header „Schilddrüse" und ist verboten."""
+
+
+_TABLE_ROW_RE = re.compile(
+    r"^\s*\|.*\|\s*$",
+    flags=re.MULTILINE,
+)
+
+
+def _looks_like_table(paragraph: str) -> bool:
+    """Heuristic: paragraph contains at least one pipe-delimited row.
+
+    We use the strict ``|cell|cell|``-form to avoid false positives on
+    prose that happens to contain a pipe (very rare in marketing copy).
+    """
+    if "|" not in paragraph:
+        return False
+    return bool(_TABLE_ROW_RE.search(paragraph))
 
 
 @dataclass(slots=True)
@@ -146,6 +216,21 @@ class _ParagraphSlice:
     start: int
     end: int
     claims: list[EvaluatedClaim]
+
+
+@dataclass(slots=True)
+class SmartApplyResult:
+    """Output of :meth:`SmartApplyService.smart_apply`.
+
+    ``residual_claims`` is populated by the convergence check - a second
+    detection pass over the rewritten text. Empty list means the rewrite
+    converged (no claims remain); a non-empty list tells the user which
+    claims still surface after the auto-rewrite and need manual review.
+    """
+
+    rewritten_text: str
+    residual_claims: list[DetectedClaim]
+    convergence_warning: str | None = None
 
 
 _PARAGRAPH_SPLIT_RE = re.compile(r"\n{2,}")
@@ -204,22 +289,36 @@ class SmartApplyService:
         tool_caller: _ToolCaller | None = None,
         model: str | None = None,
         max_concurrency: int = 4,
+        detector: ClaimDetector | None = None,
     ) -> None:
         self._call = tool_caller or create_message_with_tool
         self._model = model or settings.anthropic_model_detection
         self._max_concurrency = max_concurrency
+        # Optional convergence-check detector. Default-None lets unit
+        # tests skip the second LLM call; production wiring (the
+        # /smart-apply route) injects a real ClaimDetector instance.
+        self._detector = detector
 
     async def smart_apply(
         self,
         *,
         input_text: str,
         evaluated_claims: list[EvaluatedClaim],
-    ) -> str:
+    ) -> SmartApplyResult:
         """Rewrite the input text paragraph by paragraph so that the
         ``borderline`` / ``forbidden`` / ``unclear`` claims are
-        neutralised in context. Returns the joined rewritten text."""
+        neutralised in context.
+
+        Returns a :class:`SmartApplyResult` containing the joined
+        rewritten text plus the result of the convergence check (a
+        second detection pass on the rewritten text). An empty
+        ``residual_claims`` list means the rewrite converged - no
+        further manual review needed.
+        """
         if not input_text.strip() or not evaluated_claims:
-            return input_text
+            return SmartApplyResult(
+                rewritten_text=input_text, residual_claims=[],
+            )
 
         paragraphs = _split_paragraphs(input_text)
         slices = _assign_claims_to_paragraphs(paragraphs, evaluated_claims)
@@ -253,7 +352,55 @@ class SmartApplyService:
             sum(1 for s in slices if s.claims),
             int((time.perf_counter() - started) * 1000),
         )
-        return joined
+
+        residual, warning = await self._convergence_check(
+            input_text=input_text, rewritten_text=joined,
+        )
+        return SmartApplyResult(
+            rewritten_text=joined,
+            residual_claims=residual,
+            convergence_warning=warning,
+        )
+
+    async def _convergence_check(
+        self,
+        *,
+        input_text: str,
+        rewritten_text: str,
+    ) -> tuple[list[DetectedClaim], str | None]:
+        """Second-pass detection over the rewritten text.
+
+        Customer feedback 2026-05-27: users ran their freshly rewritten
+        text through the tool again and got 43 fresh claim hits - the
+        pipeline had no idea it didn't converge. This re-runs detection
+        on the smart_apply output and returns the residual claims so
+        the frontend can show a clear "needs another pass" signal.
+        """
+        if self._detector is None or not rewritten_text.strip():
+            return [], None
+        # Skip if the text didn't actually change (e.g. all paragraphs
+        # had no claims, or every rewrite was dropped). No new claims
+        # can have been introduced, so detection would just burn a call.
+        if rewritten_text.strip() == input_text.strip():
+            return [], None
+        try:
+            detection = await asyncio.to_thread(
+                self._detector.detect, rewritten_text,
+            )
+        except Exception as exc:
+            logger.warning("convergence detection failed: %s", exc)
+            return [], (
+                "Konvergenz-Check konnte nicht ausgeführt werden. Bitte "
+                "den umgeschriebenen Text manuell prüfen oder eine neue "
+                "Analyse starten."
+            )
+        residual = detection.claims
+        if residual:
+            logger.info(
+                "convergence: %d claims still detected in rewritten text",
+                len(residual),
+            )
+        return list(residual), None
 
     def _rewrite_one_paragraph(
         self,
@@ -267,25 +414,41 @@ class SmartApplyService:
         }[addressing]
 
         claim_list = self._format_claims(slc.claims)
+        is_table = _looks_like_table(slc.text)
         base_params = {
             "paragraph": slc.text,
             "claim_list": claim_list,
             "addressing_form": addressing,
             "addressing_hint": addressing_hint,
             "sperrliste_block": _SPERRLISTE_BLOCK,
+            "paragraph_kind_hint": _TABLE_ROW_HINT if is_table else "",
         }
 
         rewritten = self._call_paragraph_llm(base_params, retry_warning="")
         if rewritten is None:
             return slc.text
 
-        # Deterministic guard: any forbidden-term hit in the rewrite is
-        # a failure - the whole point of smart_apply is to PRODUCE a
-        # clean paragraph. Retry once with the offending terms named
-        # explicitly; if it still fails, drop back to the original so
-        # the user at least sees the unchanged paragraph (and the
-        # corresponding claim card is still flagged for them).
-        hits = find_forbidden_terms(rewritten)
+        # If the LLM signalled "drop the whole row/paragraph" - either by
+        # returning the bare DROP_ROW marker, or by leaving the rewritten
+        # paragraph empty after marker stripping - we surface an empty
+        # string. ``smart_apply`` filters empty paragraphs out before
+        # re-stitching, so the row disappears from the final text.
+        cleaned = _strip_drop_markers(rewritten).strip()
+        if not cleaned:
+            logger.info(
+                "smart_apply paragraph dropped (LLM signalled DROP_ROW/empty)",
+            )
+            return ""
+
+        # Deterministic guard: any forbidden-term hit in the cleaned
+        # paragraph is a failure. Retry once with the offending terms
+        # named explicitly + an extra reminder that ``[DROP_ROW]`` is
+        # always an acceptable answer. If it still fails, drop the row
+        # entirely rather than keeping a paragraph that introduces fresh
+        # claims (the original behavior of "fall back to source" was
+        # also wrong for tables - the original sentence is exactly what
+        # triggered detection).
+        hits = find_forbidden_terms(cleaned)
         if hits:
             forbidden_words = forbidden_terms_summary(hits)
             logger.info(
@@ -300,25 +463,33 @@ class SmartApplyService:
                 "verwenden (auch keine Synonyme/Wortvarianten):\n- "
                 + "\n- ".join(forbidden_words)
                 + "\n\nFalls eine konforme Variante ohne diese Begriffe "
-                "nicht möglich ist, streiche die problematische "
-                "Wirkungsaussage komplett und beschreibe stattdessen "
-                "nur Inhaltsstoff/Tradition/Sinneswahrnehmung."
+                "nicht möglich ist, streiche den problematischen Satz "
+                "ersatzlos oder gib ``[DROP_ROW]`` zurück, wenn eine "
+                "ganze Tabellenzeile entfernt werden soll. **Niemals** "
+                "Boilerplate über Tradition/Botanical einbauen, der das "
+                "Thema des Original-Satzes verfehlt."
             )
             rewritten = self._call_paragraph_llm(
                 base_params, retry_warning=retry_warning,
             )
             if rewritten is None:
                 return slc.text
-            still_hits = find_forbidden_terms(rewritten)
+            cleaned = _strip_drop_markers(rewritten).strip()
+            if not cleaned:
+                logger.info(
+                    "smart_apply paragraph dropped after retry (DROP_ROW)",
+                )
+                return ""
+            still_hits = find_forbidden_terms(cleaned)
             if still_hits:
                 logger.warning(
                     "smart_apply paragraph still contained forbidden "
-                    "terms after retry %r, keeping original paragraph",
+                    "terms after retry %r, dropping paragraph entirely",
                     [h.term for h in still_hits],
                 )
-                return slc.text
+                return ""
 
-        return rewritten or slc.text
+        return cleaned or slc.text
 
     def _call_paragraph_llm(
         self,
@@ -364,3 +535,60 @@ class SmartApplyService:
             )
             lines.append(block)
         return "\n\n".join(lines)
+
+
+# Markers the LLM emits when it decides a row / paragraph should be
+# dropped instead of fabricating a fallback. Drop semantics differ by
+# context: inside a Markdown table row, *any* DROP_ROW collapses the
+# whole row (header + content); in free prose, DROP_ROW / DELETE
+# removes just that span.
+_DROP_MARKER_RE = re.compile(
+    r"\[DROP_ROW\]|\[DELETE\]",
+    flags=re.IGNORECASE,
+)
+
+# A row consisting entirely of pipes, separator dashes and whitespace -
+# either a Markdown alignment row (``| --- | --- |``) or what's left
+# after we deleted both cell contents.
+_EMPTY_TABLE_ROW_RE = re.compile(r"^\s*\|[\s|\-:]*\|\s*$")
+
+
+def _line_is_blank_after_strip(line: str) -> bool:
+    """True for whitespace-only, separator-only, or all-pipe-only lines."""
+    stripped = line.strip()
+    if not stripped:
+        return True
+    if _EMPTY_TABLE_ROW_RE.match(stripped):
+        return True
+    # All-pipes-and-whitespace: legitimate cell-content was dropped.
+    return set(stripped) <= {"|", " ", "\t"}
+
+
+def _strip_drop_markers(text: str) -> str:
+    """Remove DROP_ROW / DELETE markers, drop now-meaningless rows.
+
+    A row like ``| Schilddrüse | [DROP_ROW] |`` is removed as a whole
+    (the header is meaningless without its content), not just blanked
+    on the right. In free prose, ``[DELETE]`` just removes that token
+    and leaves the surrounding text intact.
+
+    Returns ``""`` when nothing meaningful remains - the caller treats
+    that as "drop this whole paragraph".
+    """
+    lines = text.splitlines()
+    out_lines: list[str] = []
+    for line in lines:
+        # Markdown table row that mentioned DROP_ROW anywhere -> whole row out.
+        is_table_row = bool(_TABLE_ROW_RE.match(line))
+        if is_table_row and _DROP_MARKER_RE.search(line):
+            continue
+        # Generic marker removal for prose / non-row lines.
+        cleaned_line = _DROP_MARKER_RE.sub("", line)
+        out_lines.append(cleaned_line)
+
+    cleaned = "\n".join(out_lines)
+    # If every remaining line is blank / pipes-only / separator-only,
+    # treat the whole paragraph as empty.
+    if all(_line_is_blank_after_strip(line) for line in out_lines):
+        return ""
+    return cleaned

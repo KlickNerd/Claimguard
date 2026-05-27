@@ -214,6 +214,15 @@ export type RewriteBatchResponse = {
   rewrites: Record<string, string>;
 };
 
+// Special rewrite sentinel: the LLM signalled that no compliant rewrite
+// is possible for this claim. The frontend renders these as a
+// "Streichen-empfohlen"-card instead of a real rewrite suggestion.
+export const DELETE_MARKER = "[DELETE]";
+
+export function isDeleteMarker(value: string | null | undefined): boolean {
+  return typeof value === "string" && value.trim().toUpperCase() === DELETE_MARKER;
+}
+
 export type PolishResponse = {
   polished_text: string;
   change_summary: string;
@@ -221,12 +230,14 @@ export type PolishResponse = {
 
 export type SmartApplyResponse = {
   rewritten_text: string;
+  residual_claims: DetectedClaim[];
+  convergence_warning: string | null;
 };
 
 export async function smartApplyClaims(
   claims: EvaluatedClaim[],
   inputText: string,
-): Promise<string> {
+): Promise<SmartApplyResponse> {
   let response: Response;
   try {
     response = await fetch(`${API_BASE}/api/analyses/smart-apply`, {
@@ -255,7 +266,88 @@ export async function smartApplyClaims(
     throw new AnalysisError(message, code, response.status);
   }
   const data = (await response.json()) as SmartApplyResponse;
-  return data.rewritten_text ?? "";
+  return {
+    rewritten_text: data.rewritten_text ?? "",
+    residual_claims: data.residual_claims ?? [],
+    convergence_warning: data.convergence_warning ?? null,
+  };
+}
+
+// -- Final Audit (Opus 4.7 holistic compliance review) ------------
+
+export type AuditSeverity = "low" | "medium" | "high" | "critical";
+
+export type AuditCategory =
+  | "broken-table"
+  | "broken-list"
+  | "duplicate-paragraph"
+  | "orphaned-sentence"
+  | "topic-drift"
+  | "answer-misses-question"
+  | "factual-error"
+  | "circular-content"
+  | "implicit-claim-by-context"
+  | "context-disease-link"
+  | "uwg-comparative"
+  | "uwg-misleading"
+  | "hwg-violation"
+  | "lazy-disclaimer"
+  | "other";
+
+export type AuditFinding = {
+  severity: AuditSeverity;
+  category: AuditCategory;
+  location_quote: string;
+  finding: string;
+  recommendation: string;
+};
+
+export type FinalAuditResult = {
+  overall_assessment: string;
+  shippable: boolean;
+  findings: AuditFinding[];
+  model: string;
+  prompt_version: string;
+  input_tokens: number;
+  output_tokens: number;
+  latency_ms: number;
+};
+
+export async function runFinalAudit(
+  text: string,
+  options: { reformulatedFromOriginal?: boolean } = {},
+): Promise<FinalAuditResult> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}/api/analyses/final-audit`, {
+      method: "POST",
+      headers: await authHeaders(),
+      body: JSON.stringify({
+        text,
+        reformulated_from_original: options.reformulatedFromOriginal ?? false,
+      }),
+    });
+  } catch {
+    throw new AnalysisError(
+      `Die ClaimGuard-API unter ${API_BASE} antwortet nicht.`,
+      "api_unreachable",
+      0,
+    );
+  }
+  if (!response.ok) {
+    let code = "final_audit_failed";
+    let message = `Finaler Compliance-Check fehlgeschlagen (HTTP ${response.status}).`;
+    try {
+      const body = await response.json();
+      const detail = body?.detail ?? body;
+      if (detail?.code) code = detail.code;
+      if (detail?.message) message = detail.message;
+    } catch {
+      // keep defaults
+    }
+    throw new AnalysisError(message, code, response.status);
+  }
+  return (await response.json()) as FinalAuditResult;
 }
 
 export async function polishText(text: string): Promise<PolishResponse> {

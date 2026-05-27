@@ -35,6 +35,7 @@ import { DetectionClaimCard } from "@/components/app/detection-claim-card";
 import { EvaluatedClaimCard } from "@/components/app/evaluated-claim-card";
 import { HighlightedText } from "@/components/app/highlighted-text";
 import { MarkdownEditor } from "@/components/app/markdown-editor";
+import { FinalAuditPanel } from "@/components/app/final-audit-panel";
 import { PdfDropzone } from "@/components/app/pdf-dropzone";
 import { UrlInput } from "@/components/app/url-input";
 import { Button } from "@/components/ui/button";
@@ -44,11 +45,15 @@ import { DEMO_INPUT } from "@/lib/demo-data";
 import {
   AnalysisError,
   createAnalysis,
+  isDeleteMarker,
   polishText,
   rewriteAllClaims,
+  runFinalAudit,
   smartApplyClaims,
   type AnalysisResponse,
+  type DetectedClaim,
   type EvaluatedClaim,
+  type FinalAuditResult,
 } from "@/lib/api-client";
 import { downloadAsDoc } from "@/lib/export-doc";
 
@@ -121,16 +126,23 @@ function applyRewritesToText(
 
   let text = originalText;
   for (const claim of ordered) {
-    const rewrite = normaliseRewrite(
-      claim.rewrite_suggestion ?? "",
-      claim.claim_text,
-    );
+    const suggestion = claim.rewrite_suggestion ?? "";
+    // [DELETE] sentinel: the LLM signalled "no compliant rewrite
+    // possible - drop the claim entirely". Splice in an empty string
+    // and collapse any double whitespace the removal might leave.
+    if (isDeleteMarker(suggestion)) {
+      text =
+        text.slice(0, claim.position_start) + text.slice(claim.position_end);
+      continue;
+    }
+    const rewrite = normaliseRewrite(suggestion, claim.claim_text);
     text =
       text.slice(0, claim.position_start) +
       rewrite +
       text.slice(claim.position_end);
   }
-  return text;
+  // Collapse double-spaces / orphan punctuation introduced by deletions.
+  return text.replace(/  +/g, " ").replace(/\s+([.,;:!?])/g, "$1");
 }
 
 export default function AppHomePage() {
@@ -151,6 +163,14 @@ export default function AppHomePage() {
   const [polishSummary, setPolishSummary] = useState<string>("");
   const [isPolishing, setIsPolishing] = useState(false);
   const [polishError, setPolishError] = useState<string | null>(null);
+  // Convergence-check residuals from smart-apply: claims that are still
+  // detected in the rewritten text. Non-empty list means the rewrite
+  // didn't converge and the user should manually review.
+  const [smartApplyResidual, setSmartApplyResidual] = useState<DetectedClaim[]>([]);
+  // Final-audit state (Opus 4.7 holistic compliance review).
+  const [finalAuditResult, setFinalAuditResult] = useState<FinalAuditResult | null>(null);
+  const [isAuditing, setIsAuditing] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(
@@ -223,6 +243,9 @@ export default function AppHomePage() {
     setPolishedText(null);
     setPolishSummary("");
     setPolishError(null);
+    setSmartApplyResidual([]);
+    setFinalAuditResult(null);
+    setAuditError(null);
   };
 
   /** Run Sonnet over the rewritten text to fix grammar / transitions
@@ -258,6 +281,38 @@ export default function AppHomePage() {
     setPolishedText(null);
     setPolishSummary("");
     setPolishError(null);
+    setSmartApplyResidual([]);
+    setFinalAuditResult(null);
+    setAuditError(null);
+  };
+
+  /** Trigger the holistic Opus-4.7 compliance audit over the *current*
+   *  body text (polished/smart-applied version if present, otherwise
+   *  the original input). Captures structural issues the per-claim
+   *  pipeline can't see: broken tables, topic drift, duplicates,
+   *  factual errors, UWG/HWG risks, context-induced claims. */
+  const triggerFinalAudit = async () => {
+    if (!result || isAuditing) return;
+    const text = polishedText ?? result.input_text;
+    if (!text.trim()) return;
+    setIsAuditing(true);
+    setAuditError(null);
+    try {
+      const audit = await runFinalAudit(text, {
+        reformulatedFromOriginal: polishedText !== null,
+      });
+      setFinalAuditResult(audit);
+    } catch (err) {
+      if (err instanceof AnalysisError) {
+        setAuditError(err.message);
+      } else if (err instanceof Error) {
+        setAuditError(err.message);
+      } else {
+        setAuditError("Finaler Compliance-Check fehlgeschlagen.");
+      }
+    } finally {
+      setIsAuditing(false);
+    }
   };
 
   const onPdfExtracted = (text: string, sourceReference: string) => {
@@ -381,10 +436,27 @@ export default function AppHomePage() {
       // a clean marketing-grade rewrite. Replaces the naive string-
       // splice that was producing nonsense like
       // `"Vitamin D trägt zu …"` mid-sentence.
-      const rewrittenText = await smartApplyClaims(merged, result.input_text);
+      const smartApply = await smartApplyClaims(merged, result.input_text);
+      const rewrittenText = smartApply.rewritten_text;
       if (rewrittenText && rewrittenText.trim()) {
         setPolishedText(rewrittenText);
-        setPolishSummary("Absatzweise neu geschrieben für sauberen Lesefluss.");
+        const residualCount = smartApply.residual_claims.length;
+        if (residualCount > 0) {
+          setPolishSummary(
+            `Absatzweise neu geschrieben. Konvergenz-Check: ${residualCount} ${
+              residualCount === 1 ? "Claim" : "Claims"
+            } verbleibt — bitte manuell prüfen.`,
+          );
+        } else if (smartApply.convergence_warning) {
+          setPolishSummary(
+            `Absatzweise neu geschrieben. ${smartApply.convergence_warning}`,
+          );
+        } else {
+          setPolishSummary(
+            "Absatzweise neu geschrieben — keine Claims mehr erkannt.",
+          );
+        }
+        setSmartApplyResidual(smartApply.residual_claims);
       }
     } catch (err) {
       if (err instanceof AnalysisError) {
@@ -680,6 +752,15 @@ export default function AppHomePage() {
                   isPolishing={isPolishing}
                   polishError={polishError}
                   polishedText={polishedText}
+                  smartApplyResidual={smartApplyResidual}
+                  finalAuditResult={finalAuditResult}
+                  isAuditing={isAuditing}
+                  auditError={auditError}
+                  onRunAudit={() => void triggerFinalAudit()}
+                  onResetAudit={() => {
+                    setFinalAuditResult(null);
+                    setAuditError(null);
+                  }}
                 />
               )}
             </div>
@@ -820,6 +901,12 @@ function DoneState({
   isPolishing,
   polishError,
   polishedText,
+  smartApplyResidual,
+  finalAuditResult,
+  isAuditing,
+  auditError,
+  onRunAudit,
+  onResetAudit,
 }: {
   result: AnalysisResponse;
   counts: {
@@ -845,6 +932,12 @@ function DoneState({
   isPolishing: boolean;
   polishError: string | null;
   polishedText: string | null;
+  smartApplyResidual: DetectedClaim[];
+  finalAuditResult: FinalAuditResult | null;
+  isAuditing: boolean;
+  auditError: string | null;
+  onRunAudit: () => void;
+  onResetAudit: () => void;
 }) {
   const detectedNotEvaluated = result.detected_claims.filter(
     (d) => !result.evaluated_claims.some((e) => e.id === d.id),
@@ -1101,6 +1194,37 @@ function DoneState({
           {w}
         </div>
       ))}
+
+      {smartApplyResidual.length > 0 && (
+        <div className="rounded-lg border border-status-borderline/40 bg-status-borderline-bg/30 p-3 text-xs">
+          <div className="flex items-start gap-2">
+            <AlertCircle
+              className="mt-0.5 h-3.5 w-3.5 shrink-0 text-status-borderline"
+              aria-hidden
+            />
+            <div className="space-y-1">
+              <div className="font-medium text-status-borderline">
+                Konvergenz-Check: {smartApplyResidual.length}{" "}
+                {smartApplyResidual.length === 1 ? "Claim" : "Claims"} im
+                umgeschriebenen Text noch erkannt
+              </div>
+              <div className="text-foreground/75">
+                Die automatische Reformulierung hat noch nicht alle Probleme
+                gelöst. Bitte den finalen Compliance-Check unten ausführen
+                oder die markierten Stellen manuell prüfen.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <FinalAuditPanel
+        result={finalAuditResult}
+        isAuditing={isAuditing}
+        error={auditError}
+        onRun={onRunAudit}
+        onReset={onResetAudit}
+      />
     </div>
   );
 }
