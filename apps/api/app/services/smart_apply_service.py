@@ -33,6 +33,11 @@ from app.services.anthropic_client import (
     AnthropicServiceError,
     create_message_with_tool,
 )
+from app.services.forbidden_terms import (
+    find_forbidden_terms,
+    forbidden_terms_summary,
+    sperrliste_block_for_prompt,
+)
 from app.services.rewrite_service import detect_addressing_form
 
 logger = logging.getLogger(__name__)
@@ -63,6 +68,9 @@ _PARAGRAPH_TOOL: dict[str, Any] = {
 }
 
 
+_SPERRLISTE_BLOCK = sperrliste_block_for_prompt()
+
+
 _PROMPT_TEMPLATE = """Du bist Senior-Werbetexter mit Compliance-Wissen. Du
 bekommst einen einzelnen Absatz aus einem deutschen Marketing-Text und
 eine Liste der gesundheitsbezogenen Aussagen, die in diesem Absatz
@@ -80,6 +88,8 @@ rechtlich problematisch sind.
 
 {claim_list}
 
+{sperrliste_block}
+{retry_warning}
 ## Was du tust
 
 Schreibe den **gesamten Absatz** neu, sodass die oben genannten
@@ -257,14 +267,66 @@ class SmartApplyService:
         }[addressing]
 
         claim_list = self._format_claims(slc.claims)
+        base_params = {
+            "paragraph": slc.text,
+            "claim_list": claim_list,
+            "addressing_form": addressing,
+            "addressing_hint": addressing_hint,
+            "sperrliste_block": _SPERRLISTE_BLOCK,
+        }
 
-        prompt = _PROMPT_TEMPLATE.format(
-            paragraph=slc.text,
-            claim_list=claim_list,
-            addressing_form=addressing,
-            addressing_hint=addressing_hint,
-        )
+        rewritten = self._call_paragraph_llm(base_params, retry_warning="")
+        if rewritten is None:
+            return slc.text
 
+        # Deterministic guard: any forbidden-term hit in the rewrite is
+        # a failure - the whole point of smart_apply is to PRODUCE a
+        # clean paragraph. Retry once with the offending terms named
+        # explicitly; if it still fails, drop back to the original so
+        # the user at least sees the unchanged paragraph (and the
+        # corresponding claim card is still flagged for them).
+        hits = find_forbidden_terms(rewritten)
+        if hits:
+            forbidden_words = forbidden_terms_summary(hits)
+            logger.info(
+                "smart_apply paragraph contained forbidden terms %r, "
+                "retrying once",
+                forbidden_words,
+            )
+            retry_warning = (
+                "## ⚠️ Wiederholung: dein vorheriger Absatz enthielt "
+                "Sperr-Begriffe\n\n"
+                "Folgende Begriffe darfst du **auf keinen Fall** "
+                "verwenden (auch keine Synonyme/Wortvarianten):\n- "
+                + "\n- ".join(forbidden_words)
+                + "\n\nFalls eine konforme Variante ohne diese Begriffe "
+                "nicht möglich ist, streiche die problematische "
+                "Wirkungsaussage komplett und beschreibe stattdessen "
+                "nur Inhaltsstoff/Tradition/Sinneswahrnehmung."
+            )
+            rewritten = self._call_paragraph_llm(
+                base_params, retry_warning=retry_warning,
+            )
+            if rewritten is None:
+                return slc.text
+            still_hits = find_forbidden_terms(rewritten)
+            if still_hits:
+                logger.warning(
+                    "smart_apply paragraph still contained forbidden "
+                    "terms after retry %r, keeping original paragraph",
+                    [h.term for h in still_hits],
+                )
+                return slc.text
+
+        return rewritten or slc.text
+
+    def _call_paragraph_llm(
+        self,
+        base_params: dict[str, Any],
+        *,
+        retry_warning: str,
+    ) -> str | None:
+        prompt = _PROMPT_TEMPLATE.format(retry_warning=retry_warning, **base_params)
         try:
             tool_input, _, _ = self._call(
                 model=self._model,
@@ -275,13 +337,13 @@ class SmartApplyService:
             )
         except AnthropicServiceError as exc:
             logger.warning("smart_apply paragraph failed: %s", exc)
-            return slc.text
+            return None
         except Exception as exc:
             logger.warning("smart_apply unexpected error: %s", exc)
-            return slc.text
+            return None
 
         rewritten = str(tool_input.get("rewritten_paragraph") or "").strip()
-        return rewritten or slc.text
+        return rewritten or None
 
     @staticmethod
     def _format_claims(claims: list[EvaluatedClaim]) -> str:

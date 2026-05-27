@@ -26,6 +26,11 @@ from app.services.anthropic_client import (
     AnthropicServiceError,
     create_message_with_tool,
 )
+from app.services.forbidden_terms import (
+    find_forbidden_terms,
+    forbidden_terms_summary,
+    sperrliste_block_for_prompt,
+)
 from app.services.rewrite_service import detect_addressing_form
 
 logger = logging.getLogger(__name__)
@@ -64,6 +69,9 @@ _POLISH_TOOL: dict[str, Any] = {
 }
 
 
+_SPERRLISTE_BLOCK = sperrliste_block_for_prompt()
+
+
 _PROMPT_TEMPLATE = """Du bist Senior-Werbetexter und Schluss-Lektor für ein
 Supplement-Label. Du bekommst einen deutschen Marketing-Text, in dem
 einzelne Health Claims durch HCVO-konforme EU-Register-Formulierungen
@@ -73,6 +81,9 @@ um den ganzen Satz, Compliance-Klammern, doppelte Pflanzenlisten,
 Anrede springt.
 
 **Anrede im Text: {addressing_form}** ({addressing_hint})
+
+{sperrliste_block}
+{retry_warning}
 
 Deine Aufgabe ist nicht Mikrokorrektur, sondern echtes
 **Re-Writing Absatz für Absatz**. Geh den Text Block für Block durch
@@ -210,11 +221,70 @@ class PolishService:
                 "neutral oder im Imperativ"
             ),
         }[addressing]
-        prompt = _PROMPT_TEMPLATE.format(
-            text=text,
-            addressing_form=addressing,
-            addressing_hint=addressing_hint,
+        base_params = {
+            "text": text,
+            "addressing_form": addressing,
+            "addressing_hint": addressing_hint,
+            "sperrliste_block": _SPERRLISTE_BLOCK,
+        }
+
+        polished, summary = self._call_polish_llm(base_params, retry_warning="")
+        if polished is None:
+            return text, ""
+
+        # Polish is forbidden from introducing new claims (it's the
+        # explicit promise of the service). Compare forbidden-term hits
+        # in the polished output against the input. Anything NEW means
+        # the polish smuggled in a wellbeing / HWG term that wasn't
+        # there before - retry once, then fall back to the input so the
+        # user never sees a polish that worsens their compliance.
+        new_hits = _new_forbidden_hits(before=text, after=polished)
+        if new_hits:
+            forbidden_words = forbidden_terms_summary(new_hits)
+            logger.info(
+                "Polish introduced forbidden terms %r, retrying once",
+                forbidden_words,
+            )
+            retry_warning = (
+                "## ⚠️ Wiederholung: dein vorheriger Output hat neue "
+                "Sperr-Begriffe eingebaut\n\n"
+                "Folgende Begriffe waren im Input nicht enthalten und "
+                "dürfen auch in deiner Politur nicht vorkommen:\n- "
+                + "\n- ".join(forbidden_words)
+                + "\n\nPolitur ist Sprach-Korrektur, **nicht** "
+                "Marketing-Aufpeppen. Wenn der Input nüchtern war, "
+                "bleibt er nüchtern."
+            )
+            polished, summary = self._call_polish_llm(
+                base_params, retry_warning=retry_warning,
+            )
+            if polished is None:
+                return text, ""
+            still_new = _new_forbidden_hits(before=text, after=polished)
+            if still_new:
+                logger.warning(
+                    "Polish still introduced forbidden terms after "
+                    "retry %r, returning unpolished input",
+                    [h.term for h in still_new],
+                )
+                return text, ""
+
+        elapsed = int((time.perf_counter() - started) * 1000)
+        logger.info(
+            "Polish: %d chars in -> %d chars out (%d ms)",
+            len(text),
+            len(polished),
+            elapsed,
         )
+        return polished or text, summary
+
+    def _call_polish_llm(
+        self,
+        base_params: dict[str, Any],
+        *,
+        retry_warning: str,
+    ) -> tuple[str | None, str]:
+        prompt = _PROMPT_TEMPLATE.format(retry_warning=retry_warning, **base_params)
         try:
             tool_input, _, _ = self._call(
                 model=self._model,
@@ -230,17 +300,31 @@ class PolishService:
             )
         except AnthropicServiceError as exc:
             logger.warning("Polish failed (anthropic): %s", exc)
-            return text, ""
+            return None, ""
         except Exception as exc:
             logger.warning("Polish failed (unexpected): %s", exc)
-            return text, ""
+            return None, ""
         polished = str(tool_input.get("polished_text") or "").strip()
         summary = str(tool_input.get("change_summary") or "").strip()
-        elapsed = int((time.perf_counter() - started) * 1000)
-        logger.info(
-            "Polish: %d chars in -> %d chars out (%d ms)",
-            len(text),
-            len(polished),
-            elapsed,
-        )
-        return polished or text, summary
+        return polished or None, summary
+
+
+def _new_forbidden_hits(*, before: str, after: str) -> list[Any]:
+    """Return forbidden-term hits from ``after`` whose lemma was not
+    already present in ``before``.
+
+    The polish service is allowed to keep pre-existing forbidden
+    vocabulary untouched - the user may have intentionally left a
+    contested term in their copy, and asking the polish step to
+    "fix compliance" goes beyond its scope. We only flag NEW additions.
+    """
+    after_hits = find_forbidden_terms(after)
+    if not after_hits:
+        return []
+    before_terms_lower = {
+        h.term.lower() for h in find_forbidden_terms(before)
+    }
+    return [
+        h for h in after_hits
+        if h.term.lower() not in before_terms_lower
+    ]

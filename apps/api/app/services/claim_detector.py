@@ -5,8 +5,13 @@ import time
 from typing import Any, Protocol
 
 from app.config import settings
-from app.schemas.claim import DetectedClaim, DetectionResult
+from app.schemas.claim import ClaimType, DetectedClaim, DetectionResult
 from app.services.anthropic_client import create_message_with_tool
+from app.services.forbidden_terms import (
+    ForbiddenTermHit,
+    claim_type_for_hit,
+    find_forbidden_terms,
+)
 from app.services.prompt_loader import PromptLoader, get_prompt_loader
 
 logger = logging.getLogger(__name__)
@@ -147,6 +152,21 @@ class ClaimDetector:
                 ),
             )
 
+        # Deterministic safety net: add HWG / wellbeing terms that the
+        # LLM may have skipped. Customer feedback from 2026-05-26 showed
+        # terms like ``Heiltradition``, ``Anwendungsgebiete``,
+        # ``Symptom-Tagebuch`` getting through detection unflagged - the
+        # regex matcher catches those reproducibly.
+        deterministic = _deterministic_claims(input_text)
+        added = _merge_deterministic(claims, deterministic)
+        if added:
+            logger.info(
+                "Detection: %d deterministic HWG/wellbeing hits added "
+                "after LLM pass",
+                len(added),
+            )
+            claims.extend(added)
+
         return DetectionResult(
             claims=claims,
             prompt_version=template.metadata.version,
@@ -163,3 +183,68 @@ def _nullable(value: Any) -> str | None:
         return None
     stripped = str(value).strip()
     return stripped or None
+
+
+def _deterministic_claims(input_text: str) -> list[DetectedClaim]:
+    """Build synthetic ``DetectedClaim``s from forbidden-term hits.
+
+    Each unique span produces one claim - if two rules fire on the same
+    span (e.g. ``mentales Wohlbefinden`` triggers both ``wohlbefinden``
+    and ``mentales-wohlbefinden``) we keep the longer span so the UI
+    highlights the more meaningful phrase.
+    """
+    raw_hits = find_forbidden_terms(input_text)
+    if not raw_hits:
+        return []
+
+    # When multiple rules fire on overlapping spans, prefer the widest
+    # one for the user-facing claim. We bucket by approximate position
+    # (same start) and keep the longest hit per bucket.
+    by_start: dict[int, ForbiddenTermHit] = {}
+    for hit in raw_hits:
+        existing = by_start.get(hit.start)
+        if existing is None or (hit.end - hit.start) > (
+            existing.end - existing.start
+        ):
+            by_start[hit.start] = hit
+
+    out: list[DetectedClaim] = []
+    for hit in by_start.values():
+        claim_type: ClaimType = claim_type_for_hit(hit)  # type: ignore[assignment]
+        out.append(
+            DetectedClaim(
+                claim_text=input_text[hit.start : hit.end],
+                claim_type=claim_type,
+                nutrient=None,
+                substance=None,
+                implicitness="explicit",
+                position_start=hit.start,
+                position_end=hit.end,
+            ),
+        )
+    return out
+
+
+def _merge_deterministic(
+    llm_claims: list[DetectedClaim],
+    deterministic_claims: list[DetectedClaim],
+) -> list[DetectedClaim]:
+    """Return the deterministic hits that the LLM did not already cover.
+
+    A deterministic hit is considered covered when its span sits inside
+    (or matches exactly) any LLM-detected claim - in that case the
+    evaluation pass will already see the term as part of the larger
+    claim sentence and we don't want to duplicate it as its own card.
+    """
+    if not deterministic_claims:
+        return []
+    out: list[DetectedClaim] = []
+    for det in deterministic_claims:
+        covered = any(
+            llm.position_start <= det.position_start
+            and det.position_end <= llm.position_end
+            for llm in llm_claims
+        )
+        if not covered:
+            out.append(det)
+    return out

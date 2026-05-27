@@ -30,6 +30,11 @@ from app.services.anthropic_client import (
     AnthropicServiceError,
     create_message_with_tool,
 )
+from app.services.forbidden_terms import (
+    find_forbidden_terms,
+    forbidden_terms_summary,
+    sperrliste_block_for_prompt,
+)
 
 AddressingForm = Literal["du", "sie", "neutral"]
 
@@ -62,6 +67,9 @@ _REWRITE_TOOL: dict[str, Any] = {
 }
 
 
+_SPERRLISTE_BLOCK = sperrliste_block_for_prompt()
+
+
 _PROMPT_TEMPLATE = """Du bist ClaimGuard's Reformulierungs-Assistent. Du tauschst
 einen einzelnen Health Claim 1:1 gegen eine HCVO-konforme Variante aus,
 die nahtlos in den umgebenden Text passt **und natürlich klingt** -
@@ -76,6 +84,8 @@ Anrede im umgebenden Text: **{addressing_form}** (übernimm sie 1:1)
 Umgebender Kontext (Original, ±120 Zeichen, Claim selbst markiert mit «»):
 {context}
 
+{sperrliste_block}
+{retry_warning}
 Inhaltliche Vorgaben:
 1. Bei zugelassener Wortwahl (z. B. „trägt zur normalen Funktion von X bei")
    bleibe so nah am EU-Register wie möglich.
@@ -211,18 +221,77 @@ class RewriteService:
             ),
         }[addressing]
 
-        prompt = _PROMPT_TEMPLATE.format(
-            claim_text=claim.claim_text,
-            ends_with_punctuation="true" if ends_with_punct else "false",
-            status=claim.status,
-            risk_level=claim.risk_level,
-            reasoning=claim.reasoning,
-            addressing_form=addressing,
-            addressing_hint=addressing_hint,
-            nutrient_block=nutrient_line,
-            context=self._marked_context(full_text, claim),
-        )
+        base_params: dict[str, Any] = {
+            "claim_text": claim.claim_text,
+            "ends_with_punctuation": "true" if ends_with_punct else "false",
+            "status": claim.status,
+            "risk_level": claim.risk_level,
+            "reasoning": claim.reasoning,
+            "addressing_form": addressing,
+            "addressing_hint": addressing_hint,
+            "nutrient_block": nutrient_line,
+            "context": self._marked_context(full_text, claim),
+            "sperrliste_block": _SPERRLISTE_BLOCK,
+        }
 
+        # First attempt - no retry warning.
+        rewrite = self._invoke_llm(claim, base_params, retry_warning="")
+        if rewrite is None:
+            return str(claim.id), None
+
+        # Deterministic post-write guard: if the LLM smuggled in any
+        # forbidden vocabulary (HWG terms or wellbeing patterns), retry
+        # once with an explicit "you used these, do it again without".
+        hits = find_forbidden_terms(rewrite)
+        if hits:
+            forbidden_words = forbidden_terms_summary(hits)
+            logger.info(
+                "Rewrite for %s used forbidden terms %r, retrying once",
+                claim.id,
+                forbidden_words,
+            )
+            retry_warning = (
+                "## ⚠️ Wiederholung: dein vorheriger Versuch enthielt "
+                "Sperr-Begriffe\n\n"
+                "Folgende Begriffe darfst du **auf keinen Fall** wieder "
+                "verwenden (auch keine Synonyme/Wortvarianten):\n- "
+                + "\n- ".join(forbidden_words)
+                + "\n\nFalls eine konforme Reformulierung ohne diese "
+                "Begriffe nicht möglich ist, gib einen rein "
+                "produktbeschreibenden Satz zurück (Inhaltsstoff + "
+                "Sinneswahrnehmung oder rein historisch-traditionell) "
+                "statt einer Wirkungsaussage."
+            )
+            rewrite = self._invoke_llm(claim, base_params, retry_warning=retry_warning)
+            if rewrite is None:
+                return str(claim.id), None
+            still_forbidden = find_forbidden_terms(rewrite)
+            if still_forbidden:
+                logger.warning(
+                    "Rewrite for %s still contained forbidden terms after "
+                    "retry %r, dropping: %r",
+                    claim.id,
+                    [h.term for h in still_forbidden],
+                    rewrite[:160],
+                )
+                return str(claim.id), None
+
+        return str(claim.id), rewrite or None
+
+    def _invoke_llm(
+        self,
+        claim: EvaluatedClaim,
+        base_params: dict[str, Any],
+        *,
+        retry_warning: str,
+    ) -> str | None:
+        """Render the prompt, call the LLM, sanitise the result.
+
+        Returns ``None`` on a hard sanitiser drop (placeholder leak,
+        compliance-meta leak, or Anthropic-side failure) so the caller
+        can stop the rewrite cleanly.
+        """
+        prompt = _PROMPT_TEMPLATE.format(retry_warning=retry_warning, **base_params)
         try:
             tool_input, _, _ = self._call(
                 model=self._model,
@@ -233,10 +302,10 @@ class RewriteService:
             )
         except AnthropicServiceError as exc:
             logger.warning("Rewrite failed for %s: %s", claim.id, exc)
-            return str(claim.id), None
+            return None
         except Exception as exc:
             logger.warning("Unexpected rewrite error for %s: %s", claim.id, exc)
-            return str(claim.id), None
+            return None
 
         rewrite = str(tool_input.get("rewrite") or "").strip()
         rewrite = _aggressive_clean(rewrite)
@@ -248,15 +317,15 @@ class RewriteService:
                 claim.id,
                 rewrite,
             )
-            return str(claim.id), None
+            return None
         if _has_compliance_meta(rewrite):
             logger.warning(
                 "Rewrite for %s leaked compliance meta-comments, dropping: %r",
                 claim.id,
                 rewrite[:160],
             )
-            return str(claim.id), None
-        return str(claim.id), rewrite or None
+            return None
+        return rewrite or None
 
     @staticmethod
     def _context(full_text: str, claim: EvaluatedClaim) -> str:

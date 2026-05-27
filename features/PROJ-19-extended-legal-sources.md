@@ -2,7 +2,7 @@
 
 ## Status: In Progress
 **Created:** 2026-05-01
-**Last Updated:** 2026-05-01
+**Last Updated:** 2026-05-27
 **Backlog-Referenz:** ergibt sich aus PROJ-10-System-Prompt-Anforderungen + Nutzer-Feedback
 
 ## Dependencies
@@ -156,3 +156,67 @@ Mariendistel-Leber, Cranberry-Blasenentzündung):
 
 **Stand der KB nach diesem Update:** **1.961 Wissens-Chunks**
 (221 EU-Register + 188 Verordnungs-Chunks + 12 Urteile + 1.540 Botanicals).
+
+## Update 2026-05-27 — Deterministisches HWG-Vokabular + Sperrliste
+
+**Trigger:** Kundenfeedback (Ashwagandha-/Reishi-Pillar-Page) zeigte zwei
+Lücken, die mit der reinen LLM-Detection nicht zuverlässig gefangen
+wurden:
+1. HWG-Sprache wie „Heiltradition", „Anwendungsgebiete",
+   „Symptom-Tagebuch", „Eindosierung" wurde von der Detection v1.0.0
+   nicht konsistent gemeldet.
+2. Reformulationen (rewrite_service, smart_apply, polish) **bauten neu**
+   Wohlbefindens-/Vitalitäts-/Entspannungs-Sätze ein, weil das Modell
+   für „natürlich klingende Marketing-Copy" optimierte — der Text wurde
+   nach 1× Durchlauf wieder schlechter, nicht besser.
+
+**Was umgesetzt ist:**
+
+- Neues Modul [`services/forbidden_terms.py`](../apps/api/app/services/forbidden_terms.py)
+  mit zwei Regel-Tiers:
+  - `hard` (HWG / Pharma-Vokabular, 11 Regeln): Heil-Stamm,
+    Symptom-Stamm, Anwendungsgebiet/-bild, Indikation, Eindosierung,
+    Therapie, Diagnose, lindern, vorbeugen, medizinische
+    Beschwerden-Komposita, Wirkmechanismus.
+  - `soft` (HCVO Art. 10 Abs. 3 Wohlbefinden/Vitalität, 10 Regeln):
+    Wohlbefinden in jeder Form, Entspannung, Widerstandskraft,
+    Abwehrkraft, Vitalität, Boost(en/er), mentale/körperliche
+    Anspannung, mentales Wohlbefinden, Förderung des Wohlbefindens.
+  - Matcher liefert Position, Severity, Kategorie + dedup-Summary für
+    LLM-Retry-Prompts.
+- Detection-Pipeline ([`claim_detector.py`](../apps/api/app/services/claim_detector.py))
+  ergänzt LLM-Hits jetzt deterministisch um alle Forbidden-Term-Hits,
+  die nicht bereits in einem LLM-Claim-Span stecken. HWG-Stems werden
+  als `disease_based`, Vorbeugung als `reduction_based`,
+  Wohlbefindens-Sprache als `wellbeing_based` klassifiziert.
+- Detection-Prompt [`claim_detection_v1.1.0.md`](../apps/api/app/prompts/claim_detection_v1.1.0.md)
+  bekommt explizite HWG-Zusatz-Kategorie, damit das LLM den Begriff
+  selbst meldet anstatt nur den umliegenden Satz. v1.0.0 bleibt im
+  Repo, der Loader wählt automatisch 1.1.0.
+- Reformulation-Services hat jeweils einen Post-Write-Guard:
+  - [`rewrite_service.py`](../apps/api/app/services/rewrite_service.py):
+    Per-Claim-Rewrite scannt Output auf Forbidden-Terms, Retry mit
+    expliziter Sperr-Begriffsliste, Drop bei 2. Fehlschlag.
+  - [`smart_apply_service.py`](../apps/api/app/services/smart_apply_service.py):
+    Paragraph-Rewrite mit identischer Logik; Drop = Original behalten.
+  - [`polish_service.py`](../apps/api/app/services/polish_service.py):
+    Vergleicht NEUE Hits vor/nach Polish (vor-existierende
+    Sperr-Begriffe im User-Input dürfen bleiben), Retry mit
+    expliziter Liste, Drop = unpoliertes Original.
+- Alle drei Prompts haben jetzt einen statischen `Sperrliste`-Block,
+  generiert aus `forbidden_terms.sperrliste_block_for_prompt()`, damit
+  das LLM die Liste schon beim ersten Versuch sieht.
+
+**Eval-Trigger:**
+Die HWG-Sätze aus dem Kundenfeedback (Ashwagandha + Reishi) sind als
+Regressions-Set in [`tests/test_forbidden_terms.py`](../apps/api/tests/test_forbidden_terms.py)
+hinterlegt — 44 Tests grün, jede Falle aus dem Kundenbericht ist als
+eigener Testfall fixiert.
+
+**Bewusst nicht umgesetzt:**
+- Keine ML-basierte Klassifikation der HWG-Treffer — der Marketing-
+  Kontext rechtfertigt ein deterministisches Wortlisten-Verbot, eine
+  Lernschicht würde nur False-Negative-Risiken einführen.
+- Keine UI-Differenzierung HCVO vs. HWG im Frontend — die Treffer
+  laufen unter dem bestehenden Card-Schema, mit `disease_based` bzw.
+  `wellbeing_based` als Claim-Type. UI-Polish ist V1.1.
