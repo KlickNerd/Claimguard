@@ -23,6 +23,14 @@ CaseClaimType = Literal[
     "disease_based",
     "general_health",
 ]
+# Provenance of a case entry. "verified" = manually checked by Dominik
+# (or read from the original ruling). "ai_curated_pending" = added by
+# an AI assistant from training data, Aktenzeichen + Zusammenfassung
+# need a human review before commercial use. Audit-pipeline surfaces
+# both; the frontend can render pending entries with a "🤖 KI-kuratiert,
+# zu prüfen"-badge.
+VerificationStatus = Literal["verified", "ai_curated_pending"]
+AiConfidence = Literal["high", "medium", "low"]
 
 
 class CaseLawEntry(BaseModel):
@@ -53,6 +61,24 @@ class CaseLawEntry(BaseModel):
         description="Keywords for search filters (nutrient, substance, marketing topic).",
     )
     source_url: str = Field(description="Public URL where the full text can be verified.")
+    verification_status: VerificationStatus = Field(
+        default="verified",
+        description=(
+            "Provenance of this entry. Pending entries need a human "
+            "double-check before commercial use - the AI may have "
+            "guessed the Aktenzeichen wrong."
+        ),
+    )
+    ai_confidence: AiConfidence | None = Field(
+        default=None,
+        description=(
+            "When verification_status='ai_curated_pending', how sure the "
+            "AI is about the Aktenzeichen + decision date. High = "
+            "BGH-Klassiker from training data; medium = OLG/KG ruling I "
+            "remember by topic; low = topic plausible, exact Aktenzeichen "
+            "guessed."
+        ),
+    )
 
 
 class CaseLawDataset(BaseModel):

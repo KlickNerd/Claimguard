@@ -46,6 +46,11 @@ EU_CLAIMS_FILE = "vo432_authorised_claims.json"
 HCVO_FILE = "regulation_1924_2006.json"
 EXTRA_REG_FILE = "regulatory_excerpts.json"
 CASE_LAW_FILE = "case_law.json"
+# AI-curated case-law additions, marked with verification_status =
+# "ai_curated_pending" in their JSON entries. Indexed alongside the
+# verified set so the audit retrieval sees both pools, but the
+# frontend can distinguish via the payload flag.
+CASE_LAW_AI_CURATED_FILE = "case_law_ai_curated.json"
 BOTANICALS_FILE = "botanicals.json"
 BOTANICALS_EFSA_FILE = "botanicals_efsa.json"
 
@@ -164,6 +169,12 @@ def _case_law_payload(case: dict[str, Any]) -> dict[str, Any]:
         "title": case.get("title"),
         "tags": ",".join(case.get("tags") or []),
         "legal_basis": ",".join(case.get("legal_basis") or []),
+        # v1.3 (2026-05-28): mark AI-curated entries so the frontend can
+        # render a "🤖 KI-kuratiert, zu prüfen"-badge in evidence lists.
+        # Defaults to "verified" for entries from the original
+        # case_law.json that Dominik signed off on.
+        "verification_status": case.get("verification_status") or "verified",
+        "ai_confidence": case.get("ai_confidence"),
     }
 
 
@@ -341,6 +352,7 @@ def main(argv: list[str] | None = None) -> int:
     hcvo_data = _read_json(args.data_dir / HCVO_FILE)
     extra_reg_data = _read_json(args.data_dir / EXTRA_REG_FILE)
     case_law_data = _read_json(args.data_dir / CASE_LAW_FILE)
+    case_law_ai_data = _read_json(args.data_dir / CASE_LAW_AI_CURATED_FILE)
     botanicals_data = _read_json(args.data_dir / BOTANICALS_FILE)
     botanicals_efsa_data = _read_json(args.data_dir / BOTANICALS_EFSA_FILE)
 
@@ -402,12 +414,39 @@ def main(argv: list[str] | None = None) -> int:
             ],
         )
 
-    if case_law_data:
-        logger.info("Indexing case law …")
+    # Merge verified case-law (case_law.json, signed off by Dominik) and
+    # AI-curated additions (case_law_ai_curated.json, pending review).
+    # Dedup on case id so a future hand-verified entry can shadow the
+    # AI-curated draft with the same id. The verification_status flag
+    # in the payload tells the frontend which is which.
+    combined_cases: list[dict[str, Any]] = []
+    seen_case_ids: set[str] = set()
+    for source in (case_law_data, case_law_ai_data):
+        if not source:
+            continue
+        for entry in source.get("cases", []):
+            entry_id = entry.get("id")
+            if not entry_id or entry_id in seen_case_ids:
+                continue
+            seen_case_ids.add(entry_id)
+            combined_cases.append(entry)
+
+    if combined_cases:
+        verified_n = sum(
+            1 for c in combined_cases
+            if (c.get("verification_status") or "verified") == "verified"
+        )
+        pending_n = len(combined_cases) - verified_n
+        logger.info(
+            "Indexing case law (%d total, %d verified, %d AI-curated pending) …",
+            len(combined_cases),
+            verified_n,
+            pending_n,
+        )
         case_law_count = _index(
             client,
             CASE_LAW_COLLECTION,
-            case_law_data.get("cases", []),
+            combined_cases,
             _case_law_text,
             _case_law_payload,
             label="case_law",
