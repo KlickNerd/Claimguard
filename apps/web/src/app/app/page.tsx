@@ -181,6 +181,12 @@ export default function AppHomePage() {
   // "One-shot LLM rewrite all findings"-button state.
   const [isApplyingAuditByLLM, setIsApplyingAuditByLLM] = useState(false);
   const [applyAuditByLLMError, setApplyAuditByLLMError] = useState<string | null>(null);
+  // Persistent success state for the apply-by-LLM action so the user
+  // gets unmistakable feedback even when the polished view scroll is
+  // off-screen. Auto-clears when a fresh audit runs.
+  const [applyAuditByLLMSuccess, setApplyAuditByLLMSuccess] = useState<
+    { findingsApplied: number; appliedAt: number } | null
+  >(null);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(
@@ -257,6 +263,7 @@ export default function AppHomePage() {
     setFinalAuditResult(null);
     setAuditError(null);
     setAppliedAuditFindings(new Set());
+    setApplyAuditByLLMSuccess(null);
   };
 
   /** Run Sonnet over the rewritten text to fix grammar / transitions
@@ -296,6 +303,7 @@ export default function AppHomePage() {
     setFinalAuditResult(null);
     setAuditError(null);
     setAppliedAuditFindings(new Set());
+    setApplyAuditByLLMSuccess(null);
   };
 
   /** Apply a single audit finding's ``replacement`` to the current body
@@ -367,6 +375,11 @@ export default function AppHomePage() {
         setAppliedAuditFindings(
           new Set(finalAuditResult.findings.map((_, i) => i)),
         );
+        // Drive the prominent success banner in the audit panel.
+        setApplyAuditByLLMSuccess({
+          findingsApplied: out.findings_applied,
+          appliedAt: Date.now(),
+        });
       }
     } catch (err) {
       if (err instanceof AnalysisError) {
@@ -434,8 +447,10 @@ export default function AppHomePage() {
       });
       setFinalAuditResult(audit);
       // Fresh audit -> fresh applied-set. Old applies are no longer
-      // meaningful because the finding indices change.
+      // meaningful because the finding indices change. Same for the
+      // apply-by-LLM success banner.
       setAppliedAuditFindings(new Set());
+      setApplyAuditByLLMSuccess(null);
     } catch (err) {
       if (err instanceof AnalysisError) {
         setAuditError(err.message);
@@ -902,6 +917,8 @@ export default function AppHomePage() {
                   onApplyAllAuditByLLM={() => void applyAllAuditByLLM()}
                   isApplyingAuditByLLM={isApplyingAuditByLLM}
                   applyAuditByLLMError={applyAuditByLLMError}
+                  applyAuditByLLMSuccess={applyAuditByLLMSuccess}
+                  onDismissApplyAuditSuccess={() => setApplyAuditByLLMSuccess(null)}
                 />
               )}
             </div>
@@ -1054,6 +1071,8 @@ function DoneState({
   onApplyAllAuditByLLM,
   isApplyingAuditByLLM,
   applyAuditByLLMError,
+  applyAuditByLLMSuccess,
+  onDismissApplyAuditSuccess,
 }: {
   result: AnalysisResponse;
   counts: {
@@ -1091,6 +1110,8 @@ function DoneState({
   onApplyAllAuditByLLM: () => void;
   isApplyingAuditByLLM: boolean;
   applyAuditByLLMError: string | null;
+  applyAuditByLLMSuccess: { findingsApplied: number; appliedAt: number } | null;
+  onDismissApplyAuditSuccess: () => void;
 }) {
   const detectedNotEvaluated = result.detected_claims.filter(
     (d) => !result.evaluated_claims.some((e) => e.id === d.id),
@@ -1383,6 +1404,8 @@ function DoneState({
         onApplyAllByLLM={onApplyAllAuditByLLM}
         isApplyingAllByLLM={isApplyingAuditByLLM}
         applyAllByLLMError={applyAuditByLLMError}
+        applyAllByLLMSuccess={applyAuditByLLMSuccess}
+        onDismissApplySuccess={onDismissApplyAuditSuccess}
       />
     </div>
   );

@@ -42,6 +42,11 @@ type Props = {
   onApplyAllByLLM?: () => void;
   isApplyingAllByLLM?: boolean;
   applyAllByLLMError?: string | null;
+  // Successful Apply-All-By-LLM produces a banner with the count of
+  // applied findings + a one-click "audit erneut starten" trigger so
+  // the user can verify convergence.
+  applyAllByLLMSuccess?: { findingsApplied: number; appliedAt: number } | null;
+  onDismissApplySuccess?: () => void;
 };
 
 const SEVERITY_TONE: Record<AuditSeverity, { bg: string; fg: string; label: string }> = {
@@ -97,7 +102,55 @@ export function FinalAuditPanel({
   onApplyAllByLLM,
   isApplyingAllByLLM,
   applyAllByLLMError,
+  applyAllByLLMSuccess,
+  onDismissApplySuccess,
 }: Props) {
+  // Persistent success banner sits above the audit-result card so the
+  // user gets unmistakable confirmation that the apply happened. The
+  // banner shows even while the (stale) audit result is still visible
+  // below - dismissing it OR running a fresh audit clears it.
+  const successBanner = applyAllByLLMSuccess && !isAuditing ? (
+    <div className="rounded-xl border border-status-allowed/40 bg-status-allowed-bg/40 p-4">
+      <div className="flex items-start gap-3">
+        <CheckCircle2
+          className="mt-0.5 h-5 w-5 shrink-0 text-status-allowed"
+          aria-hidden
+        />
+        <div className="flex-1">
+          <div className="text-sm font-semibold text-status-allowed">
+            {applyAllByLLMSuccess.findingsApplied > 0
+              ? `${applyAllByLLMSuccess.findingsApplied} Audit-Befunde wurden im Text umgesetzt.`
+              : "Audit-Befunde wurden im Text umgesetzt."}
+          </div>
+          <p className="mt-1 text-xs text-foreground/85">
+            Der überarbeitete Text steht jetzt links im Ergebnis-Panel.
+            Du kannst die Reformulierung nochmal prüfen lassen, um zu
+            sehen ob jetzt alles sauber ist.
+          </p>
+          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="default"
+              onClick={onRun}
+            >
+              <ShieldCheck className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+              Audit erneut starten (Konvergenz prüfen)
+            </Button>
+            {onDismissApplySuccess ? (
+              <button
+                type="button"
+                onClick={onDismissApplySuccess}
+                className="text-[11px] text-muted-foreground underline-offset-4 hover:underline"
+              >
+                Schließen
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : null;
   // Empty initial state - render the "trigger" card so the user knows
   // the audit exists.
   if (!result && !isAuditing && !error) {
@@ -207,6 +260,7 @@ export function FinalAuditPanel({
 
   return (
     <div className="space-y-3">
+      {successBanner}
       <div
         className={cn(
           "rounded-xl border p-5",
