@@ -39,6 +39,12 @@ from app.services.forbidden_terms import (
         ("eine vorbeugende Wirkung", "vorbeugen-stem"),
         ("Magenbeschwerden lindern", "beschwerde-medical"),
         ("Gelenkbeschwerden bekämpfen", "beschwerde-medical"),
+        # v1.2: Pharma-Dosierungs-Vokabular (Lebensmittel sagt
+        # Verzehrmenge / Tagesportion).
+        ("Tagesdosis bei Kombination", "dosierung-stem"),
+        ("die empfohlene Dosierung", "dosierung-stem"),
+        ("Anfangsdosis schrittweise erhöhen", "dosierung-stem"),
+        ("Dosierungsempfehlung beachten", "dosierung-stem"),
     ],
 )
 def test_hard_hits(text: str, expected_label: str) -> None:
@@ -65,6 +71,10 @@ def test_hard_hits(text: str, expected_label: str) -> None:
         ("für innere Entspannung", "entspannung-stem"),
         ("entspannend nach einem langen Tag", "entspannung-stem"),
         ("Abwehrkräfte stärken", "abwehrkraft"),
+        # v1.2: Adaptogen als Begriff (OLG Celle / OLG München).
+        ("klassische Adaptogene aus dem Ayurveda", "adaptogen-term"),
+        ("hat adaptogene Eigenschaften", "adaptogen-term"),
+        ("ein modernes Adaptogen", "adaptogen-term"),
     ],
 )
 def test_soft_hits(text: str, expected_label: str) -> None:

@@ -82,6 +82,11 @@ _FINAL_AUDIT_TOOL: dict[str, Any] = {
                                 "uwg-misleading",
                                 "hwg-violation",
                                 "lazy-disclaimer",
+                                "adaptogen-term",
+                                "observation-bias",
+                                "expert-endorsement",
+                                "presentation-medicinal",
+                                "pharma-vocab-dosage",
                                 "other",
                             ],
                         },
@@ -213,12 +218,15 @@ class FinalAuditService:
                 model=self._model,
                 system=None,
                 user_content=rendered.rendered,
-                # Sonnet 4.6 output speed ~60-80 tok/s for structured
-                # tool calls. 4k tokens = ~60-90 s of generation, well
-                # under our SDK timeout. 4k is plenty for the 25-finding
-                # cap from the prompt (max ~150 tokens per finding).
+                # v1.2 lifted the findings cap from 25 to 40 because
+                # Gemini's analysis surfaced category blind spots
+                # (adaptogen-term, observation-bias, expert-endorsement,
+                # presentation-medicinal, pharma-vocab-dosage). With
+                # ~150 tokens per finding + executive summary we land
+                # at ~6500 tokens worst-case; 8k leaves a safety margin
+                # for the SDK without truncating mid-tool-call.
                 tool=_FINAL_AUDIT_TOOL,
-                max_tokens=4000,
+                max_tokens=8000,
                 # Override the client-default 60 s per-call timeout so
                 # the SDK doesn't bail mid-generation on big pillar
                 # pages and trigger a tenacity retry storm.

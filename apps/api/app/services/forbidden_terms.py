@@ -120,6 +120,28 @@ _HARD_RULES: tuple[_Rule, ...] = (
         example="Eindosierung, eindosieren",
     ),
     _Rule(
+        label="dosierung-stem",
+        # Dosierung / Dosierungsempfehlung / Tagesdosis / Anfangsdosis -
+        # arzneimittelrechtliche Begriffe. Lebensmittel/NEMs sprechen
+        # von Verzehrmenge / Tagesportion / Verzehrempfehlung.
+        pattern=_w(
+            r"\b(?:"
+            r"dosierung[a-zäöüß]*|"
+            r"tagesdosis|tagesdosen|"
+            r"anfangsdosis|"
+            r"einnahmedosis|"
+            r"höchstdosis|hoechstdosis|"
+            r"dosis-empfehlung|dosisempfehlung"
+            r")\b",
+        ),
+        severity="hard",
+        category="HWG-Pharma-Vokabular",
+        example=(
+            "Dosierung, Tagesdosis, Anfangsdosis, "
+            "Dosierungsempfehlung"
+        ),
+    ),
+    _Rule(
         label="therapie-stem",
         # Therapie, therapeutisch, Therapieansatz. Allow "Aromatherapie"
         # only if you really want to - we keep it strict for now.
@@ -280,6 +302,18 @@ _SOFT_RULES: tuple[_Rule, ...] = (
         category="HCVO-Art10Abs3-Wohlbefinden",
         example="Förderung des Wohlbefindens",
     ),
+    _Rule(
+        label="adaptogen-term",
+        # "Adaptogen" / "adaptogene Eigenschaft" - OLG Celle und OLG
+        # München werten den Begriff als unzulässige gesundheitsbezogene
+        # Angabe. Soft (nicht hart), weil eine bewusste, eingeordnete
+        # Erwähnung als Tradition manchmal akzeptabel ist - aber im
+        # Werbe-Kontext alleinstehend riskant.
+        pattern=_w(r"\badaptogen[a-zäöüß]*\b"),
+        severity="soft",
+        category="HCVO-Adaptogen-Begriff",
+        example="Adaptogen, Adaptogene, adaptogene Eigenschaft",
+    ),
 )
 
 
@@ -409,6 +443,7 @@ _CLAIM_TYPE_FOR_LABEL: dict[str, str] = {
     "boosten": "wellbeing_based",
     "mentale-anspannung": "wellbeing_based",
     "koerperliche-anspannung": "wellbeing_based",
+    "adaptogen-term": "wellbeing_based",
 }
 
 

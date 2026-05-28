@@ -87,6 +87,11 @@ const CATEGORY_LABELS: Record<AuditCategory, string> = {
   "uwg-misleading": "UWG § 5 – Irreführung",
   "hwg-violation": "HWG-Verstoß",
   "lazy-disclaimer": "Lazy-Disclaimer",
+  "adaptogen-term": "„Adaptogen"-Begriff",
+  "observation-bias": "Beobachtungs-Bias",
+  "expert-endorsement": "Art. 12c HCVO (Fachkreise)",
+  "presentation-medicinal": "Präsentationsarzneimittel-Risiko",
+  "pharma-vocab-dosage": "Pharma-Dosierungsbegriff",
   other: "Sonstiges",
 };
 

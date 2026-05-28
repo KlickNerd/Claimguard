@@ -292,6 +292,11 @@ export type AuditCategory =
   | "uwg-misleading"
   | "hwg-violation"
   | "lazy-disclaimer"
+  | "adaptogen-term"
+  | "observation-bias"
+  | "expert-endorsement"
+  | "presentation-medicinal"
+  | "pharma-vocab-dosage"
   | "other";
 
 export type AuditFinding = {

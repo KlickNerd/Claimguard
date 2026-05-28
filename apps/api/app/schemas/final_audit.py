@@ -38,6 +38,12 @@ AuditCategory = Literal[
     "uwg-misleading",
     "hwg-violation",
     "lazy-disclaimer",
+    # v1.2 additions (2026-05-28) - blind spots Gemini caught
+    "adaptogen-term",
+    "observation-bias",
+    "expert-endorsement",
+    "presentation-medicinal",
+    "pharma-vocab-dosage",
     # Catch-all for anything else
     "other",
 ]
