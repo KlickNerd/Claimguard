@@ -102,6 +102,7 @@ class AuditApplyService:
         *,
         text: str,
         findings: list[AuditFinding],
+        overall_assessment: str = "",
     ) -> tuple[str, int]:
         """Return ``(rewritten_text, sdk_findings_applied)``.
 
@@ -111,14 +112,26 @@ class AuditApplyService:
         (Anthropic outage, schema mismatch), we propagate the
         :class:`AnthropicServiceError` so the API layer can return a
         503 with a clean message instead of a partial result.
+
+        Fallback for the customer-observed "0 findings + non-empty
+        summary" case (2026-05-28): if ``findings`` is empty but
+        ``overall_assessment`` contains prose describing what's wrong,
+        the prompt switches to a summary-only mode and rewrites the
+        text against the prose. Avoids leaving the user stranded when
+        the auditor LLM declined to populate the structured list.
         """
         if not text or not text.strip():
             return text, 0
-        if not findings:
+        # No findings AND no summary - nothing to do.
+        if not findings and not overall_assessment.strip():
             return text, 0
 
         template = self._loader.get("apply_audit")
-        findings_block = _format_findings_block(findings)
+        findings_block = (
+            _format_findings_block(findings)
+            if findings
+            else _format_summary_fallback_block(overall_assessment)
+        )
         rendered = self._loader.render(
             "apply_audit",
             {"text": text, "findings_block": findings_block},
@@ -163,10 +176,12 @@ class AuditApplyService:
             )
             return text, 0
 
+        applied = len(findings) if findings else 1
         logger.info(
-            "apply_audit: %d findings applied, %d chars in -> %d chars out, "
-            "%d in/%d out tokens, %d ms",
-            len(findings),
+            "apply_audit: %d findings applied (mode=%s), %d chars in -> "
+            "%d chars out, %d in/%d out tokens, %d ms",
+            applied,
+            "findings" if findings else "summary_fallback",
             len(text),
             len(rewritten),
             in_tok,
@@ -174,7 +189,7 @@ class AuditApplyService:
             elapsed_ms,
         )
 
-        return rewritten or text, len(findings)
+        return rewritten or text, applied
 
 
 def _format_findings_block(findings: list[AuditFinding]) -> str:
@@ -200,3 +215,28 @@ def _format_findings_block(findings: list[AuditFinding]) -> str:
             ),
         )
     return "\n\n".join(lines)
+
+
+def _format_summary_fallback_block(overall_assessment: str) -> str:
+    """Render a summary-only block when the audit didn't emit
+    structured findings.
+
+    Used when the auditor LLM returned a non-empty ``overall_assessment``
+    but an empty findings list. The block tells the apply-LLM that it
+    must read the prose summary, derive concrete fixes itself, and
+    apply them to the text.
+    """
+    return (
+        "### Hinweis — keine strukturierten Findings verfügbar\n\n"
+        "Der vorherige Compliance-Audit hat keine strukturierte "
+        "Finding-Liste geliefert, aber folgende **Executive Summary** "
+        "abgegeben:\n\n"
+        f"> {overall_assessment.strip()}\n\n"
+        "Lies die Summary genau, identifiziere die genannten Probleme "
+        "im Text **selbst** und wende konkrete Fixes an: HWG-Vokabular "
+        "ersetzen oder streichen, kaputte Tabellen reparieren, Topic-"
+        "Drifts auflösen, Sachfehler korrigieren, UWG-/HWG-Verstöße "
+        "entschärfen. Die Sperrliste und Anti-Drift-Regeln aus dem "
+        "Hauptprompt gelten weiterhin. Gib am Ende den vollständig "
+        "überarbeiteten Text zurück."
+    )

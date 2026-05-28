@@ -232,6 +232,15 @@ class ApplyAuditRequest(BaseModel):
             "iterate them and apply each fix to the text."
         ),
     )
+    overall_assessment: str = Field(
+        default="",
+        description=(
+            "Executive summary from the audit. Used as a fallback "
+            "instruction when ``findings`` is empty but the auditor "
+            "described issues in prose - the apply-LLM reads the "
+            "summary and derives the fixes itself."
+        ),
+    )
 
 
 class ApplyAuditResponse(BaseModel):
@@ -271,14 +280,17 @@ async def apply_audit(
     sperrliste guard ensures the rewrite never silently leaks HWG /
     wellbeing vocabulary into the user's marketing copy.
     """
-    if not payload.findings:
-        # Nothing to apply - echo the text back. Avoids a wasted Sonnet
-        # call when the audit reported zero findings (shippable text).
+    if not payload.findings and not payload.overall_assessment.strip():
+        # Neither structured findings nor a prose summary - the audit
+        # reported a truly shippable text. Echo back unchanged.
         return ApplyAuditResponse(rewritten_text=payload.text, findings_applied=0)
     try:
         rewritten, applied = await asyncio.wait_for(
             asyncio.to_thread(
-                service.apply, text=payload.text, findings=payload.findings,
+                service.apply,
+                text=payload.text,
+                findings=payload.findings,
+                overall_assessment=payload.overall_assessment,
             ),
             timeout=480.0,
         )

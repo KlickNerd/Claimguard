@@ -265,7 +265,7 @@ export function FinalAuditPanel({
                 </>
               ) : null}
             </div>
-            {result.findings.length > 0 && onApplyAllByLLM && (
+            {!result.shippable && onApplyAllByLLM && (
               <div className="mt-3">
                 <Button
                   type="button"
@@ -281,7 +281,7 @@ export function FinalAuditPanel({
                         className="mr-1.5 h-3.5 w-3.5 animate-spin"
                         aria-hidden
                       />
-                      Claude wendet alle Befunde an …
+                      Claude wendet die Befunde an …
                     </>
                   ) : (
                     <>
@@ -296,8 +296,11 @@ export function FinalAuditPanel({
                   </p>
                 ) : null}
                 <p className="mt-1.5 text-[11px] text-muted-foreground">
-                  Sonnet 4.6 überarbeitet den Text in einem Durchgang
-                  basierend auf allen oben aufgelisteten Findings.
+                  Sonnet 4.6 überarbeitet den Text in einem Durchgang.
+                  {result.findings.length === 0
+                    ? " Da keine strukturierten Findings vorliegen, "
+                      + "nutzt Sonnet die Executive Summary als Anweisung."
+                    : ` Adressiert alle ${result.findings.length} Findings oben.`}
                 </p>
               </div>
             )}

@@ -340,13 +340,24 @@ export default function AppHomePage() {
    *  splices that might leave gaps. */
   const applyAllAuditByLLM = async () => {
     if (!finalAuditResult || isApplyingAuditByLLM) return;
-    if (finalAuditResult.findings.length === 0) return;
+    // Allow trigger even with empty findings list: the backend uses
+    // overall_assessment as fallback instruction.
+    if (
+      finalAuditResult.findings.length === 0 &&
+      !finalAuditResult.overall_assessment.trim()
+    ) {
+      return;
+    }
     const baseText = polishedText ?? result?.input_text ?? "";
     if (!baseText) return;
     setIsApplyingAuditByLLM(true);
     setApplyAuditByLLMError(null);
     try {
-      const out = await applyAuditFindings(baseText, finalAuditResult.findings);
+      const out = await applyAuditFindings(
+        baseText,
+        finalAuditResult.findings,
+        finalAuditResult.overall_assessment,
+      );
       if (out.rewritten_text && out.rewritten_text.trim()) {
         setPolishedText(out.rewritten_text);
         setPolishSummary(

@@ -326,13 +326,18 @@ export type ApplyAuditResponse = {
 export async function applyAuditFindings(
   text: string,
   findings: AuditFinding[],
+  overallAssessment: string = "",
 ): Promise<ApplyAuditResponse> {
   let response: Response;
   try {
     response = await fetch(`${API_BASE}/api/analyses/apply-audit`, {
       method: "POST",
       headers: await authHeaders(),
-      body: JSON.stringify({ text, findings }),
+      body: JSON.stringify({
+        text,
+        findings,
+        overall_assessment: overallAssessment,
+      }),
     });
   } catch {
     throw new AnalysisError(
